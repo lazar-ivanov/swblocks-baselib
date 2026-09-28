@@ -565,8 +565,38 @@ reported to the maintainer rather than asked:
 - **D6** exempts `host` as well as `te` (§3, D6). A premise in `Session.h` and `TestSession.h` that
   cited RFC 9110 §5.6.2 for case-insensitive `trailers` is corrected to RFC 5234 §2.3, comment only.
 
-**Found and not decided** — recorded as rows I1 to I13 of the owed list, in
-[`astra-remediation-owed-work.md`](astra-remediation-owed-work.md).
+**Found during the run** — rows I1 to I13 of the owed list, in
+[`astra-remediation-owed-work.md`](astra-remediation-owed-work.md). They were recorded at first, not
+folded, and §11 says what became of them.
+
+## 11. Folding in what the run found — decided 2026-09-27, after the three change-sets landed
+
+**The maintainer's ruling.** Once the change-sets were ready, the run had eleven open rows. The
+maintainer asked why they had not been folded into the implementation. Ten of them could have been:
+- seven needed no new decision — consequences of decisions taken, text or test fixes;
+- three needed only a question asked during the run.
+
+Only I13 needed its own change-set, and even that decision should have been asked, not listed. The
+rule is now in `AGENTS.md` v2.15, "Fold what the implementation finds" (`ea7e414`):
+- what the work finds is folded into the change-set open on those files;
+- each decision is asked as soon as it is clear, and asked again if the implementation undermines it;
+- only three kinds may stay owed.
+
+**The four decisions it needed, put and taken the same hour, all as recommended:**
+
+| # | Decided |
+|---|---|
+| **I13** — the data race in the core TCP/TLS forced cancel | **Fix now, minimal shape.** Delete the redundant `SO_LINGER` write from `shutdownSocket( force )`: linger is off by default, the acceptor sets it off, and asio consults the flag only on destruction. It lands in core change-set **CS-6**, with ThreadSanitizer evidence and a whole-suite gate |
+| **I2** — a truncated TLS stream's teardown waits the 60 s protocol timer | **Shape (A), in core:** once a read has seen a truncation, the TLS task skips waiting for the peer's close_notify. It is in CS-6, behind a design note agreed before code |
+| **I5** — an overflowed request can be replayed | **Refuse the replay**, as D4 refuses one onto a sink that threw. It is in CS-4 |
+| **I6** — a setup timeout surfaces as "Operation canceled" | **Carry the timeout**, through a small additive cancel-with-a-reason path from the pool. It is in CS-4. This reverses to the maintainer if the path proves not small |
+
+**Where each row went:**
+- **CS-4** (lane 1): I1, I4, I8, I10, I11 and I12, which need no decision, then I5 and I6.
+- **CS-5** (lane 2): I3, one TLS test peer per role.
+- **CS-6** (lane 3): I13 and I2, the core pair, gated on the whole suite.
+- I7 and I9 were already done.
+- Nothing from the run stays owed except the Windows matrix run, which needs another host.
 
 ## 10. The change-sets, as they landed
 
