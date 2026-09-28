@@ -27,9 +27,12 @@ win; fix this one.
 | **Maintainer** | the human | takes decisions, pushes | — |
 | **Orchestrator** | the main session, in the main worktree on the integration branch | plans the lanes, writes the briefs, runs the reviews, merges, gates, keeps the records and the ledger | writes production code; pushes |
 | **Lane** | one `opus-lane` agent per change-set, in its own worktree | implements its change-set, validates it at clang debug, commits on its branch, keeps a journal | merges, rebases, pushes, stashes; touches another lane's files or worktree; builds a second toolchain or variant |
-| **Reviewer** | a `fable-reviewer` agent | reviews a design note or a checkpoint, independently, and argues its findings with the orchestrator until they agree | edits code; commits; runs builds, unless the delegation says so |
+| **Reviewer** | an `opus-reviewer` agent | reviews a design note or a checkpoint, independently, and argues its findings with the orchestrator until they agree | edits code; commits; runs builds, unless the delegation says so |
 
-Both agent types run at **maximum reasoning effort**. Their definitions are in Appendix A.
+Both agent types run the **Opus model at maximum reasoning effort**. Their definitions are in
+Appendix A. *Changed 2026-09-27 by the maintainer: reviews had run on the Fable model
+(`fable-reviewer`). Fable finished the one it had in hand, CS-6's I2 design note, and every review
+task after it runs on Opus.*
 
 ## 2. Setting up
 
@@ -37,14 +40,23 @@ Both agent types run at **maximum reasoning effort**. Their definitions are in A
    folding rule: several items in one file are one change-set. **Change-sets which touch
    disjoint files run in parallel; overlapping ones are sequenced.** Order them by what should land
    first, and say why.
-2. **Agent definitions.** `~/.claude/agents/opus-lane.md` and `~/.claude/agents/fable-reviewer.md`,
-   verbatim from Appendix A. **Effort comes only from a definition** — the Agent tool's `model`
-   override does not set it, so a `general-purpose` agent with a model override runs at that type's
-   default effort. **A session loads definitions only from directories which existed when it
-   started**: creating `~/.claude/agents/` mid-session leaves its agents unlaunchable (*"Agent type
-   … not found"*) until the session is restarted. Create them, restart, and prove each type
-   launches before relying on it. The repository's `.claude/` is gitignored, which is why they live
-   in the home directory and why Appendix A carries them.
+2. **Agent definitions.** `~/.claude/agents/opus-lane.md` and `~/.claude/agents/opus-reviewer.md`,
+   verbatim from Appendix A.
+   - **Effort comes only from a definition.** The Agent tool's `model` override does not set it, so a
+     `general-purpose` agent with a model override runs at that type's default effort.
+   - **A definition written mid-session may not be launchable at once.** Two cases were seen on
+     2026-09-27:
+     - a new `~/.claude/agents/` directory stayed unlaunchable (*"Agent type … not found"*) until a
+       restart;
+     - a new file in the existing directory failed a probe immediately after it was written, and
+       became available later in the same session. The harness announced it.
+     
+     Prove each type launches before relying on it, and restart only if it never appears.
+   - **Until it appears**, a review may run on `opus-lane`, which has the same model and the same
+     effort, with a delegation that makes it a read-only reviewer. Never run one on a type without
+     `effort: max`.
+   - The repository's `.claude/` is gitignored, which is why the definitions live in the home
+     directory and why Appendix A carries them.
 3. **Worktrees.** One per lane, as siblings of the main worktree, each on a **fresh branch from the
    integration tip**. **Before reusing a worktree, look at it**: `git status`, and whether its HEAD
    is merged. Uncommitted work found there is never discarded unseen — on 2026-09-27 a lane worktree
@@ -112,7 +124,7 @@ When the lane reports its change-set implemented:
 
 1. **The orchestrator reviews first**, at the source: the diff, the tests, the red and green logs,
    the journal. A report is a claim until its evidence is read.
-2. **The reviewer reviews independently** (`fable-reviewer`, maximum effort): the diff against the
+2. **The reviewer reviews independently** (`opus-reviewer`, maximum effort): the diff against the
    decision record, every claim checked at its source, findings labelled VERIFIED / INFERRED / NOT
    VERIFIED with severities, written to a review file in the state directory.
 3. **Back and forth until both agree.** The orchestrator answers each finding — accepted, rejected
@@ -263,13 +275,14 @@ Finish with a concise report: commits (hash and subject), what each proves and h
 anything left open, and anything the orchestrator must decide.
 ````
 
-`~/.claude/agents/fable-reviewer.md`:
+`~/.claude/agents/opus-reviewer.md` — it replaced `fable-reviewer.md`, whose body it keeps; only the
+model, the name and the fold rule's line differ:
 
 ````markdown
 ---
-name: fable-reviewer
-description: Independent reviewer of designs, plans and code on the Fable model at maximum reasoning effort. Use when Lazar asks for a fable review.
-model: fable
+name: opus-reviewer
+description: Independent reviewer of designs, plans and code on the Opus model at maximum reasoning effort. Use for every review task in the parallel implementation workflow - design notes and checkpoint reviews.
+model: opus
 effort: max
 ---
 
@@ -291,6 +304,8 @@ How to review:
 - When you correct a claim, quote what it said and say why it is wrong.
 - Where wording should change, write the wording itself, keyed to file and line.
 - Give a severity to each finding and a reversing condition to each recommendation.
+- What you find that belongs in the change-set under review is folded into it, not deferred: say so
+  (`AGENTS.md`, "Fold what the implementation finds").
 
 Finish with a concise summary - verdicts and top findings in severity order - and the paths of any
 files you wrote.
