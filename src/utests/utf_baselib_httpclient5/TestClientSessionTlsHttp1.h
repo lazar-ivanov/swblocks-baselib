@@ -222,6 +222,7 @@ namespace utest
 
             return om::copy( *slot );
         }
+
     } // sessiontlsh1
 
 } // utest
