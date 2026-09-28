@@ -1469,8 +1469,20 @@ namespace bl
 
             virtual bool scheduleTaskFinishContinuation( SAA_in_opt const std::exception_ptr& eptrIn = nullptr ) OVERRIDE
             {
+                /*
+                 * A CANCELLED ESTABLISHMENT IS NOT RETRIED. A cancel can fail the handshake with a
+                 * truncation, which is retryable - through the receive shutdown of a forced cancel
+                 * during the handshake (TcpSslSocketAsyncBase::shutdownSocketOnCancel( )), or through
+                 * a lost cancel followed by the peer's orderly close - and the task would then start
+                 * over, to be stopped only by the restart's own cancel checks. Tested before
+                 * isProtocolHandshakeRetryableError( ), which records a truncation on the stream, so
+                 * that a cancelled establishment is not classified at all
+                 * (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md)
+                 */
+
                 if(
                     eptrIn &&
+                    ! base_type::isCanceled() &&
                     m_retries < m_maxRetryCount &&
                     base_type::isChannelOpen() &&
                     base_type::isProtocolHandshakeNeeded &&
