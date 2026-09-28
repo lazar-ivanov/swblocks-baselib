@@ -771,8 +771,7 @@ namespace bl
                         break;
 
                     case EventKind::Trailers:
-                        m_response.trailers( std::move( event.headers ) );
-                        armIdleTimer();
+                        applyTrailers( event );
                         break;
 
                     case EventKind::BodyWanted:
@@ -1046,6 +1045,19 @@ namespace bl
             {
                 BL_UNUSED( deferred );
 
+                if( m_isCompleted || m_isCompletionPending )
+                {
+                    /*
+                     * A HEADER BLOCK FOR A REQUEST WHICH HAS ALREADY FAILED IS DROPPED, as a late
+                     * Data block is ( applyData( ), which says why a decided completion can only be
+                     * a failure while one can still arrive ): the response the caller holds is not
+                     * written - its task has completed, and the caller may be reading it - and no
+                     * timer is armed. D3's guard at its siblings, owed-list row I8
+                     */
+
+                    return;
+                }
+
                 if( event.isInterim )
                 {
                     InterimResponse interim;
@@ -1073,6 +1085,23 @@ namespace bl
                 m_isFinalHeadersSeen = true;
 
                 cancelTimer( m_headersTimer );
+
+                armIdleTimer();
+            }
+
+            void applyTrailers( SAA_inout Event& event )
+            {
+                if( m_isCompleted || m_isCompletionPending )
+                {
+                    /*
+                     * Dropped for applyHeaders( )'s reason: not written into the response the caller
+                     * holds, and no timer armed
+                     */
+
+                    return;
+                }
+
+                m_response.trailers( std::move( event.headers ) );
 
                 armIdleTimer();
             }
