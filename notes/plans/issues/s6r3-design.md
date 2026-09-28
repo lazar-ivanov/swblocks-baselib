@@ -3,6 +3,12 @@
 **Status:** design, 2026-09-22. **Nothing implemented; nothing under `src/` was touched and nothing
 was built** — another lane was compiling and the machine has two cores.
 
+**Implemented 2026-09-23 and 24:** H06 and H08 at `0f8d9bd`; H10 at `f4b858c`, merged at `144dd79`;
+H09's documented minimum at `291add2`, merged at `8fcb950` — its structural fix stays deferred, as P1
+of `http-content-decoders-deferral.md`; and H04a, re-gated in §12, at `08e18b9`, merged at `4d70076`.
+"Nothing implemented" above is the status at design time and is left as written, in the house
+pattern of `s6r1-design.md`. *(Marked 2026-09-28, astra's third review, T02.)*
+
 **Scope:** H06, H08, H09, H10 and H04a from `astra-review-verification-record.md`. H11 is settled
 and is not designed here — see §5.
 

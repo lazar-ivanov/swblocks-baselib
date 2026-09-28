@@ -4,6 +4,13 @@
 says which of the 29 findings survive checking, which are rediscoveries, what each costs, and the
 order they should be taken in.
 
+**Remediation landed 2026-09-22 to 24**, as the plan's layer L6R: S6R.1 merged at `3bcf21e`, S6R.4 at
+`38ed037`, S6R.2 at `c2af9d2`, and S6R.3 in parts — H06 and H08 at `0f8d9bd`, H10 at `144dd79`, H09's
+documented minimum at `8fcb950` and H04a at `4d70076`. Every finding is dispositioned on
+`astra-remediation-owed-work.md`. "No remediation implemented" above is the status when this record
+was written, and is left as written, in the house pattern of `s6r1-design.md`. *(Marked 2026-09-28,
+astra's third review, T02.)*
+
 **Source:** `notes/plans/http2-l0-l6-architecture-security-review-2026-09-21.md` — an architecture and
 security review of L0–L6 by GPT-6 ("astra"), 29 findings on the implemented client (H01–H29) plus 11
 on the parked decompression proposals (C01–C11).

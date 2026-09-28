@@ -5,6 +5,12 @@ and nothing was built.** These three are separated from the rest of the astra re
 none is a bug fix: H06 reverses a behaviour a test pins, H08 needs a rule the design never wrote,
 and H11 is conformance for its own sake. Each needs an answer before a lane can start.
 
+**Answered 2026-09-22 (`913522d`) and implemented:** H06 and H08 at `0f8d9bd` on 2026-09-23; H11
+closed as a chosen leniency, its justification rewritten in S6R.4 (`b1224b3`, merged at `38ed037`)
+and pointed to at `291add2` (merged at `8fcb950`). "Nothing implemented" above is the status when
+the questions were put, and is left as written, in the house pattern of `s6r1-design.md`. *(Marked
+2026-09-28, astra's third review, T02.)*
+
 **Scope:** H06, H08, H11 from `astra-review-verification-record.md` §5.
 
 **Provenance, because the recurring failure here is a right conclusion on a wrong premise.**
