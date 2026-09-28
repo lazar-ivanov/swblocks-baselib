@@ -1263,8 +1263,9 @@ namespace bl
              * @brief Whether a response to this method, with this status, can carry content at all
              *
              * RFC 9110: a response to HEAD has none ( 9.3.2 ), and neither has a 204 ( 15.3.5 ) nor a
-             * 304 ( 15.4.5 ). The method is matched EXACTLY, as the HTTP/1.1 driver and the pool
-             * match it - the method token is case sensitive ( 9.1 )
+             * 304 ( 15.4.5 ). Nor has a 205 - framed like any other, but a server MUST NOT generate
+             * content in one ( 15.3.6 ). The method is matched EXACTLY, as the HTTP/1.1 driver and
+             * the pool match it - the method token is case sensitive ( 9.1 )
              */
 
             static bool canCarryContent(
@@ -1349,9 +1350,10 @@ namespace bl
              * astra's second review. A failed hop's body is whatever arrived before the failure, and
              * a decoder refusing it - as every real one refuses a truncated input - threw out of
              * continuationTask( ), which the execution queue turns into the task's failure IN PLACE
-             * of the failure which really happened. And a response to HEAD, a 204 and a 304 have no
-             * content to decode: their Content-Encoding and Content-Length describe a representation
-             * the caller did not receive, and removing them lost that part of the answer
+             * of the failure which really happened. And a response to HEAD, a 204, a 205 and a 304
+             * have no content to decode: their Content-Encoding and Content-Length describe a
+             * representation the caller did not receive, and removing them lost that part of the
+             * answer
              *
              * AND ONLY FOR EXACTLY ONE CODING - H24, see tryGetTheOnlyCoding( ). Undoing several is
              * the decoder programme's ( notes/plans/issues/http-content-decoders-deferral.md ); until

@@ -53,8 +53,8 @@
  *
  * Decided: the Content-Encoding list is read across every field, and a response is decoded only
  * when it carries exactly one coding in total; and only when the hop succeeded and the response can
- * carry content - not a response to HEAD, and not a 204 or a 304. Everything else is handed back
- * with its body and all its headers untouched.
+ * carry content - not a response to HEAD, and not a 204 or a 304, and by the same rule not a 205
+ * ( owed-list row I4 ). Everything else is handed back with its body and all its headers untouched.
  *
  * WHY OVER HTTP/1.1, AND WHY THIS PEER. Every case here is a statement about header fields the peer
  * writes - two fields of one name, a list in one field, a HEAD answered with a length, a response
