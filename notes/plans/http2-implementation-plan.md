@@ -1654,7 +1654,124 @@ by one whole-suite gate.
 | **CS-4** | I1, I4, I5 (rule (B)), I6 (with the connect deadline), I8, I10, I11 and I12 | merged at `988544a`, gated |
 | **CS-6**, core | I13, I2, D-L3-1 (the lost forced cancel), D2 (SimpleHttpTask's handshake timer) and D3 (our own connect loop) | merged at `f2baa2f`, gated; the Windows matrix is handed off |
 
-All three were gated at once, green on `0f6f05d`, over all 58 modules.
+All three were gated at once, green on `0f6f05d`, over all 58 modules. The gate's two explained
+exits are not failures:
+- `utf_baselib_jni` exits 200 with this host's pre-existing teardown error, after all 11 of its cases
+  pass;
+- `utf_baselib_plugin` is a library, not an executable.
+
+**Astra's third review, 2026-09-28 — two change-sets, planned 2026-09-28.** The review is
+`http2-l0-l6-third-architecture-security-review-2026-09-28.md`, of `93e2d90`. It found no new P1 and no
+regression introduced by CS-1 to CS-6, and two findings. Both were checked at the source by the
+orchestrator before planning. The decisions they need are put, and recorded, in
+`issues/astra-third-review-decisions.md`.
+
+- **T01 (P2), pre-existing: `isRetryable( )` and `outcome( )` on a completed request can race a late
+  `Closed`.**
+  - **What happens.** When the request's own failure wins — a timeout, a cancel, a cap, a sink or
+    source which threw — the task completes and answers its caller before the driver delivers the
+    stream's close. The drain goes on applying later batches after completion, and `applyClosed( )`
+    writes `m_isRetryable` and `m_outcome` (`HttpClientRequestTask.h:1564`, `:1570`) under the task
+    lock. The public getters (`:2403-2410`) read them with no lock.
+  - **What the comments promise.** `sinkDelivered( )`'s comment names the one safe place to read
+    these fields: `continuationTask( )`, which runs inside the drain that completed the hop. Nothing
+    enforces that. A direct caller that waits for completion and then reads the fields races the
+    late close. It is a C++ data race even when the late write stores the same value.
+  - **What is safe already, verified:**
+    - the session's own retry decision: it reads the fields from the synchronous continuation;
+    - `sinkDelivered( )`, `hasSinkThrown( )`, `isOwnFailure( )`, `response( )` and
+      `interimResponses( )`: every writer of these sits behind a completion guard.
+  - **Five sites write the pair.**
+    - `applyAcquired( )` writes it four times (`:954`, `:995`, `:999`, `:1013`). It returns early once
+      the task is complete or its completion is pending (`:888`), so it never writes after
+      completion.
+    - `applyClosed( )` writes it twice (`:1564`, `:1570`), and it is the only writer after completion.
+  - **The slot release reads `m_outcome` when it runs** (`releaseConnectionSlot( )`, `:2149`). The
+    late close's verdict reaches the pool that way.
+  - **The locks.** `TaskBase::notifyReadyImpl( )` runs the ready callback off the task lock
+    (`TaskBase.h:719-730`). The queue holds its own lock while it runs the continuation, and
+    queue-then-task is the documented lock order (`TaskBase.h:50-60`), so a getter taking the task
+    lock would add no new edge. What argues against the task lock is only that it would couple a
+    getter to the drain.
+  - **The comments promise the same batch only.** A close drained in the same batch behind the
+    task's own failure still writes the pair (`:2459-2462`). A close in a later batch is documented
+    nowhere.
+  - **The decision is the maintainer's** (D1 of the decision record): (b′) freeze at completion,
+    (a) live and synchronized, (b) a full completion snapshot, or (c) a continuation-only contract.
+  - **The recommendation: (b′), freeze at completion. It is I8's principle applied to the last two
+    fields: after completion, a late event changes nothing the caller reads.**
+    - `applyClosed( )` writes the pair only `if( ! m_isCompleted )`.
+    - The close hands `outcomeOnClosed( )`'s value to `releaseConnectionSlot( )` as a parameter, so
+      the pool still gets the late verdict.
+    - No lock and no new field. Same-batch behaviour is kept, and so is every documented promise.
+    - A late `Closed` is **not** dropped: its slot release and cleanup are needed, as Astra cautions.
+    - It reverses to (a) if the maintainer wants a direct caller to learn, after its own failure won,
+      what the connection did afterwards. All five write sites then take a leaf lock, and the getters
+      read under it.
+  - **The tests, in `utf_baselib_httpclient`, where the probes are.** `src/utests/AGENTS.md` forbids
+    including across modules. The lane measures the module before its cases land.
+    - **A deterministic case.**
+      - The request finishes by a timeout or a cancel, and the probe connection's close is withheld.
+      - The case reads the getters, delivers a Draining-published error close, then waits for the
+        release and reads them again. They are unchanged: the freeze.
+      - The pool's release record shows the late verdict (`42:unusable`).
+      - The slot is released once. The guard at `:1558` drops a second close, and the probe's sink
+        cannot deliver one.
+    - **A ThreadSanitizer pair.** The getters are read between `deliverClosed( )`, which does not
+      wait for the drain, and `waitForRelease( )`. There, the late write and the read are ordered by
+      nothing, so ThreadSanitizer reports the race whichever runs first, with no second thread and no
+      timing window. A read before the close, or after the release, is ordered and silent.
+      - The red is on today's code, and the green after the fix.
+      - It runs in a tree with no other build, with its positive control.
+  - **Reach:** every direct user of `HttpClientRequestTaskImpl` over both protocols, and every
+    module whose objects include `HttpClientRequestTask.h`. It is not core baselib: no `TaskBase` and
+    no frozen interface changes.
+  - **The gate:** clang release and gcc debug over every module whose `.d` names the header
+    (workflow §4.5). Its transport error handling does not change.
+  - **Windows:** only the deterministic case runs there, since ThreadSanitizer does not. It is one
+    line in `windows-matrix-handoff.md`.
+- **T02 (P3), recurring: the current-status summaries still describe landed fixes as pending.**
+  - **The stale statements, each checked:**
+    - `http2-design.md`'s security considerations: R02 is "decided, not yet fixed" (`:1625`), the
+      decoder bullet says P2/P3 are "live now" (`:1634`), and R01/R03 are "not yet implemented …
+      hold until CS-1 lands" (`:1643-1647`);
+    - `http2-design.md` still names `asio::async_connect( )` as what walks the resolved addresses
+      (`:1288-1290`, `:1821`). CS-6's own connect loop replaced it. This is a mechanism correction
+      only: the L4 finding asking for a per-endpoint bound stays open;
+    - `issues/http-content-decoders-deferral.md`: "not yet implemented" (`:242-247`);
+    - `issues/http2-l6-review-record.md`'s status table:
+      - row 12 is "not yet implemented" (`:1208`); it was done at `0f3b0ba`;
+      - ThreadSanitizer is "not run since the remediation" (`:1212`); B6 ran it (`2b47b57`);
+      - the two test rows are "OWED, and not written" (`:1214-1215`); both were written, at `1196218`
+        and `724f82e`;
+    - this plan's "after them, one ThreadSanitizer pass" (`:1644-1645`), which is done;
+    - the owed list's R09 row, which reads FIXED while these summaries lag.
+  - **The correction:** each says what landed, at which commit, and what remains. Dated decisions
+    are kept as history. P1/H09 and full layered decoding stay separate matters.
+  - **Folded in with it: where the run's evidence lives.** The records cite `logs/astra2/…`, and
+    Astra could not find it from the checkout. It is the run's evidence directory, kept outside the
+    repository on purpose: `http2-l0-state/logs/astra2/`, a sibling of the checkout. CS-8 says so in
+    `issues/astra-second-review-decisions.md`, and the orchestrator says so in the third review's
+    record.
+  - **The recurrence is itself a decision.** R09 was the same drift. The L6 record's table, written
+    by the bucket C sweep on 2026-09-27, was stale the same day. So under `AGENTS.md` ("an item
+    recorded twice is a decision waiting") it goes to the maintainer as D2, with T01: a mechanical
+    reconciliation of every current-status summary that names a change-set's items, as part of that
+    change-set's sweep.
+
+| Change-set | Finding | Files | Lane |
+|---|---|---|---|
+| **CS-7** | T01 — the status getters | `HttpClientRequestTask.h`; the cases in `utf_baselib_httpclient`, measured first; one line in `issues/windows-matrix-handoff.md` | lane 1, branch `astra3-cs7` |
+| **CS-8** | T02 — the status summaries, and where the evidence lives | `http2-design.md`, `issues/http-content-decoders-deferral.md`, `issues/http2-l6-review-record.md`, `issues/astra-remediation-owed-work.md`, `issues/astra-second-review-decisions.md`, and this plan's own stale line. Not the third review's decision record: the orchestrator writes that one as each change-set lands | lane 2, branch `astra3-cs8` |
+
+**How they run.** The two touch disjoint files and run as parallel lanes (workflow
+`parallel-implementation-workflow.md`).
+- **CS-7** starts once the maintainer has chosen T01's shape. Its checkpoint review is by an Opus
+  reviewer, and the orchestrator merges and gates it.
+- **CS-8** is text only and needs no gate. Its checkpoint review checks every corrected statement
+  against its commit.
+- **Both** fold what they find, ask their decisions during the run, and are monitored from launch
+  (`AGENTS.md` v2.16).
 
 **Acceptance.** Each slice: focused modules under clang debug in the lane, then clang and gcc release
 plus the whole-suite gate by the orchestrator. S6R.1 and S6R.2 additionally owe the cheap
