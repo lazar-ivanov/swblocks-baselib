@@ -7,6 +7,12 @@ specified, not written. Its change-set is sequenced **before** H04a's re-gate (`
 because it is what turns a wrong gate on the driver poll into a failed request instead of a stack
 overflow.
 
+**Implemented 2026-09-23 at `24db294`, merged at `05ecf9e`:** the bound in `ConnectionPool.h`, and
+its cases in `utf_baselib_h2client4`, as the implementing lane's section below describes them.
+"Nothing implemented; the bound is specified, not written" above is the status when this record was
+written, and is left as written, in the house pattern of `s6r1-design.md`. *(Marked 2026-09-28,
+astra's third review, T02.)*
+
 ## The hazard
 
 `examineKey( )` charges the waiters of a key — `++attempts`, the counter `maxRetriesPerRequest`

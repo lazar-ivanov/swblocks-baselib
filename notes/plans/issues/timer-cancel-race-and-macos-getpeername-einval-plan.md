@@ -13,6 +13,11 @@
   is pushed onto a queue, so verification does not have to rely on repetition alone.
 - These are the first production edits in this effort; everything before was test-only.
 - Status: analysis complete, nothing implemented.
+- **Implemented 2026-09-09 in `79488fa`, the commit that added this plan:** all four production
+  edits (`TaskBase.h`, `TcpBaseTasks.h`, `TcpBlockTransferClient.h`, `NetUtils.h`) and the
+  regression test, `Tasks_TimerTaskCancelBeforeStartTests` in `TestTasks3.h`. The status above is
+  the plan's at writing, left as written in the house pattern of `s6r1-design.md`. *(Marked
+  2026-09-28, astra's third review, T02.)*
 
 ## Issue 1 — Timer task cancelled before it starts sleeps the full init delay (confirmed)
 
