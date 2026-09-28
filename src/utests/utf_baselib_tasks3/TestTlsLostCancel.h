@@ -81,6 +81,12 @@
  *     truncation, which the connector counts as retryable, and today it restarts the cancelled
  *     establishment. The retry guard stops that.
  *
+ * AND THE FIX'S OWN RECORD, committed with (c): TlsLostCancel_TheHandshakeFlagBelongsToTheOwnHandshakeTests
+ * pins when the policy counts a handshake as this task's own - from its start until it completes, and
+ * never across a retry's new stream, a detached stream or an attached one. It is what keeps the
+ * receive shutdown off every application phase, and no ending can show it: a cancel reaps a registered
+ * read before any receive shutdown would.
+ *
  * Every order above is fixed by a posting order or by a single free I/O thread, never by a delay.
  * The bound only decides how long a case gives its task before it makes the peer act, which is what
  * ends a lost cancel today.
@@ -975,6 +981,126 @@ namespace utest
                 );
         }
 
+        /**
+         * @brief A connection establisher over the plain TLS policy which records, under the task
+         * lock, whether the policy counts a handshake as this task's own - before its handshake
+         * starts, once it has started, and once it has completed - and which fails its second
+         * attempt, if the connector makes one, before that attempt's handshake starts
+         */
+
+        class HandshakeFlagProbe :
+            public bl::tasks::TcpConnectionEstablisherConnector< bl::tasks::TcpSslSocketAsyncBase >
+        {
+            BL_DECLARE_OBJECT_IMPL( HandshakeFlagProbe )
+
+        public:
+
+            typedef bl::tasks::TcpConnectionEstablisherConnector< bl::tasks::TcpSslSocketAsyncBase >
+                base_type;
+
+        protected:
+
+            std::vector< std::string >                                          m_flags;
+            std::size_t                                                         m_attempts;
+
+            HandshakeFlagProbe(
+                SAA_in                  std::string&&                           host,
+                SAA_in                  const unsigned short                    port,
+                SAA_in                  const bool                              isRetried
+                )
+                :
+                base_type( BL_PARAM_FWD( host ), port, false /* logExceptions */ ),
+                m_attempts( 0U )
+            {
+                if( ! isRetried )
+                {
+                    base_type::m_maxRetryCount = 0U;
+                }
+            }
+
+            void recordFlag( SAA_in const std::string& where )
+            {
+                m_flags.push_back( where + ( base_type::m_isOwnHandshakeRunning ? ": set" : ": clear" ) );
+            }
+
+            virtual bool beginPreHandshakeStage( SAA_in const bl::cpp::bool_callback_t& continueCallback ) OVERRIDE
+            {
+                ++m_attempts;
+
+                if( m_attempts > 1U )
+                {
+                    recordFlag( "the second attempt, before its handshake" );
+
+                    BL_THROW(
+                        bl::UnexpectedException(),
+                        BL_MSG()
+                            << "The probe ends the task at its second attempt"
+                        );
+                }
+
+                recordFlag( "before the handshake" );
+
+                const bool result = continueCallback();
+
+                /*
+                 * Still under the lock of the connect handler, which the handshake's own completion
+                 * needs too, so the handshake has started here and cannot have completed
+                 */
+
+                recordFlag( "the handshake started" );
+
+                return result;
+            }
+
+            virtual bool continueAfterConnected() OVERRIDE
+            {
+                recordFlag( "the handshake completed" );
+
+                return false;
+            }
+
+        public:
+
+            auto flags() const -> std::vector< std::string >
+            {
+                BL_MUTEX_GUARD( base_type::m_lock );
+
+                return m_flags;
+            }
+
+            bool isOwnHandshakeRunning() const
+            {
+                BL_MUTEX_GUARD( base_type::m_lock );
+
+                return base_type::m_isOwnHandshakeRunning;
+            }
+        };
+
+        typedef bl::om::ObjectImpl< HandshakeFlagProbe >                        HandshakeFlagProbeImpl;
+
+        /**
+         * @brief Runs a flag probe to its end
+         */
+
+        inline void runFlagProbe( SAA_in const bl::om::ObjPtr< HandshakeFlagProbeImpl >& probe )
+        {
+            using namespace bl;
+            using namespace bl::tasks;
+
+            const auto task = om::qi< Task >( probe );
+
+            scheduleAndExecuteInParallel(
+                [ &task ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+                {
+                    eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                    eq -> push_back( task );
+
+                    eq -> wait( task );
+                }
+                );
+        }
+
     } // lostcancel
 
 } // utest
@@ -1243,6 +1369,121 @@ UTF_AUTO_TEST_CASE( TlsLostCancel_ACancelledHandshakeIsNotRetriedTests )
     chkOrFail( ! result.wasRestarted, "the connector restarted a cancelled establishment; " + readings );
 
     chkEndedPromptlyAsACancel( result, "TLS, stranded, the cancelled handshake", readings );
+}
+
+/**
+ * @brief (c)'s RECORD - a handshake counts as this task's own from its start until it completes, and
+ * never across a retry's new stream, a detached stream or an attached one
+ *
+ * Four runs over the plain TLS policy, each a pure input. A handshake which completes clears the
+ * record before the continuation runs; one which fails leaves it set, which is harmless on a stream
+ * that never carries application data - so the retry's new stream, a detached stream and an attached
+ * one each have to clear it
+ */
+
+UTF_AUTO_TEST_CASE( TlsLostCancel_TheHandshakeFlagBelongsToTheOwnHandshakeTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::lostcancel;
+
+    const auto describeFlags = []( SAA_in const std::vector< std::string >& flags ) -> std::string
+    {
+        return joinRecords( flags );
+    };
+
+    {
+        /*
+         * A handshake which completes
+         */
+
+        TlsEndingPeer peer( TlsEndingPeer::Ending::AwaitTheClient );
+
+        const auto probe = HandshakeFlagProbeImpl::createInstance( std::string( "localhost" ), peer.port(), true );
+
+        runFlagProbe( probe );
+
+        const auto flags = probe -> flags();
+
+        const std::vector< std::string > expected =
+        {
+            "before the handshake: clear",
+            "the handshake started: set",
+            "the handshake completed: clear",
+        };
+
+        chkOrFail(
+            expected == flags && ! probe -> isOwnHandshakeRunning(),
+            "a completed handshake: " + describeFlags( flags )
+            );
+    }
+
+    {
+        /*
+         * A handshake which fails with a truncation, which the connector retries on a new stream
+         */
+
+        RawHandshakePeer peer( RawHandshakePeer::Ending::ShutSendAfterTheClientHello );
+
+        const auto probe = HandshakeFlagProbeImpl::createInstance( std::string( "127.0.0.1" ), peer.port(), true );
+
+        runFlagProbe( probe );
+
+        const auto flags = probe -> flags();
+
+        const std::vector< std::string > expected =
+        {
+            "before the handshake: clear",
+            "the handshake started: set",
+            "the second attempt, before its handshake: clear",
+        };
+
+        chkOrFail( expected == flags, "a retried handshake: " + describeFlags( flags ) );
+    }
+
+    {
+        /*
+         * A handshake which fails with no retry leaves the record set, and a detached stream clears it
+         */
+
+        RawHandshakePeer peer( RawHandshakePeer::Ending::ShutSendAfterTheClientHello );
+
+        const auto probe = HandshakeFlagProbeImpl::createInstance( std::string( "127.0.0.1" ), peer.port(), false );
+
+        runFlagProbe( probe );
+
+        const bool isSetAtTheEnd = probe -> isOwnHandshakeRunning();
+
+        const auto stream = probe -> detachStream();
+
+        chkOrFail(
+            isSetAtTheEnd && nullptr != stream && ! probe -> isOwnHandshakeRunning(),
+            "a failed handshake, then its stream detached: " + describeFlags( probe -> flags() ) +
+                "; set at the end " + ( isSetAtTheEnd ? "yes" : "no" )
+            );
+    }
+
+    {
+        /*
+         * The same, and a stream attached in its place clears it
+         */
+
+        RawHandshakePeer peer( RawHandshakePeer::Ending::ShutSendAfterTheClientHello );
+
+        const auto probe = HandshakeFlagProbeImpl::createInstance( std::string( "127.0.0.1" ), peer.port(), false );
+
+        runFlagProbe( probe );
+
+        const bool isSetAtTheEnd = probe -> isOwnHandshakeRunning();
+
+        probe -> attachStream( TcpSslSocketAsyncBase::stream_ref() );
+
+        chkOrFail(
+            isSetAtTheEnd && ! probe -> isOwnHandshakeRunning(),
+            "a failed handshake, then a stream attached: " + describeFlags( probe -> flags() ) +
+                "; set at the end " + ( isSetAtTheEnd ? "yes" : "no" )
+            );
+    }
 }
 
 #endif /* __UTEST_TESTTLSLOSTCANCEL_H_ */

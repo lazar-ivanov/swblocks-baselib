@@ -37,3 +37,8 @@
 --log_level=message --run_test=TlsLostCancel_ACancelAfterTheHandshakeStartsIsNotLostTests
 --log_level=message --run_test=TlsLostCancel_ACancelInsideTheTlsShutdownIsReissuedTests
 --log_level=message --run_test=TlsLostCancel_ACancelledHandshakeIsNotRetriedTests
+
+# (c)'s record: when the TLS policy counts a handshake as the task's own, which is what keeps the receive
+# shutdown off every application phase. Committed with the fix, since the record is the fix's own.
+
+--log_level=message --run_test=TlsLostCancel_TheHandshakeFlagBelongsToTheOwnHandshakeTests
