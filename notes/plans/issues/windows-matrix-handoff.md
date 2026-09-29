@@ -552,10 +552,10 @@ orchestrator's, recorded when CS-9 lands):
     check. It passes on both sides of the fix by design; its verdict is ThreadSanitizer's, which this
     host lacks.
 - **D2. `utf_baselib_h2client11`'s x86 debug size.** Record it. It is 39,802,696 bytes at a64 clang
-  debug - 38.0 MB as `utf_objsize.py` counts - which is about 42 to 44 MB on x86 by the ratio row 5c
-  measured: inferred, not measured. That is over the 40 MB target and under the 75 MB ceiling, and its
-  reason is in its `Main.cpp`: the HTTP/2 driver over the stranded TLS policy, which every case
-  instantiates.
+  debug - 38.0 MB as `utf_objsize.py` counts - which is about 43 to 44 MB on x86 by the ratio row 5c
+  measured, 1.13 to 1.17: inferred, not measured. That is over the 40 MB target and under the 75 MB
+  ceiling, and its reason is in its `Main.cpp`: the HTTP/2 driver over the stranded TLS policy, which
+  every case instantiates.
 - **D3. Whether it builds at x86 `ccl16` release.** Object size does not govern that combination, so
   the size above says nothing about it (`src/utests/AGENTS.md`, "The x86 release caveat"). The only
   check is the build.
