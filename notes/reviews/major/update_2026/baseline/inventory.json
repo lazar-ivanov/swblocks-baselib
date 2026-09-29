@@ -9509,7 +9509,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1475,
+   "line": 1487,
    "module": "utf_baselib_h2client11",
    "name": "NegotiatedPublication_ACancelAfterTheHandshakeReportsH2Tests",
    "namespaces": []
@@ -9521,7 +9521,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1441,
+   "line": 1453,
    "module": "utf_baselib_h2client11",
    "name": "NegotiatedPublication_ACancelDuringAHeldHandshakeReportsUnknownTests",
    "namespaces": []
@@ -9533,7 +9533,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1509,
+   "line": 1521,
    "module": "utf_baselib_h2client11",
    "name": "NegotiatedPublication_AFallbackToHttp11ReportsHttp11Tests",
    "namespaces": []
@@ -9545,7 +9545,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1331,
+   "line": 1343,
    "module": "utf_baselib_h2client11",
    "name": "NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests",
    "namespaces": []
@@ -9557,7 +9557,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1245,
+   "line": 1257,
    "module": "utf_baselib_h2client11",
    "name": "NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadTests",
    "namespaces": []
@@ -18758,7 +18758,7 @@
    "line": 97,
    "module": "utf_baselib_h2client11",
    "ns": "utest",
-   "sha": "ad757c1850554706a3c4898d580b9656"
+   "sha": "beb06b47b19e724d962de54c29e2894c"
   },
   {
    "conditional_only": false,
@@ -27634,7 +27634,7 @@
    "line": 95,
    "module": "utf_baselib_h2client11",
    "name": "utest",
-   "sha": "fa90601f288d285922964aa536b5a8bc"
+   "sha": "37424ac3f286e0b51f31712a996701cc"
   },
   {
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
