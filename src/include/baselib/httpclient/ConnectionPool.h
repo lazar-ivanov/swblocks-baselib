@@ -1118,14 +1118,16 @@ namespace bl
                     const auto& connection = entry -> current();
 
                     /*
-                     * isReady FIRST, and it is not a style preference. The h2 driver's
-                     * negotiated( ) is not a const member - it IS the establishing task, so the
-                     * value is settled by the handshake - and what replaces the const is a
-                     * publication order plus a rule its class comment states in terms: read
-                     * state( ) first, and a reader which observes Connecting must not look.
-                     * isReady is the pool's own record of having observed Ready, so testing it
-                     * first is that rule; testing it last read the enum of a driver which may
-                     * still have been writing it
+                     * isReady FIRST, and it is not a style preference - though it is no longer what
+                     * makes the read safe: every driver's negotiated( ) is safe from any thread at
+                     * any time (ClientConnection.h), the h2 driver's because the establishment
+                     * base publishes its value itself. What isReady decides is which entries COUNT.
+                     * It is the pool's own record of having observed Ready, and an h2 task which
+                     * fell back reports Http11 from its handshake onwards but never publishes
+                     * Ready: read without isReady, it would raise the key's limit to
+                     * maxConnectionsPerKeyHttp11 before the pool has adopted, and observed, the
+                     * HTTP/1.1 driver which replaces it
+                     * (notes/plans/issues/astra4-cs9-negotiated-publication-design.md, section 5)
                      */
 
                     if(
