@@ -1895,10 +1895,14 @@ namespace bl
                  * and an ALPN identifier which disagree cannot be assembled here; protocol( ) and
                  * negotiatedAlpn( ) are read-only forwarders over it
                  *
-                 * It is read at the END and not at submit time because that is when it is settled:
-                 * a request submitted to an h2 task before ALPN resolves can be bounced onto a
-                 * fallback driver, and the value which describes the connection the response
-                 * actually came over is the one the connection publishes now
+                 * It is read at the END and not at submit time: a request submitted to an h2 task
+                 * before ALPN resolves can be bounced onto a fallback driver, and the value which
+                 * describes the connection the response actually came over is the one that
+                 * connection has published by then. The END IS NOT ALWAYS AFTER THE NEGOTIATION,
+                 * though - a request which fails first, while its connection is still establishing,
+                 * reads Unknown with no identifier. The read is safe either way: the connection
+                 * publishes the value itself, and negotiated( ) may be called from any thread at
+                 * any time (ClientConnection.h)
                  */
 
                 if( m_connection )
