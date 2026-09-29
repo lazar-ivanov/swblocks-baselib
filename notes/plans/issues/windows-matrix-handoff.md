@@ -507,7 +507,7 @@ tip in the result. The decisions are in `astra-third-review-decisions.md`.
 ## Astra's fourth review, 2026-09-29 — what CS-9 owes Windows
 
 **Run only from a tip the maintainer has pushed** that contains CS-9's merge, and record the tip in the
-result. *(The merge commit is filled in when CS-9 lands.)* The decision is D1 of
+result. CS-9's merge is `5db9ae8`, and its Linux gate is green on `bb8d320`. The decision is D1 of
 `astra-fourth-review-decisions.md`, shape (a″), and the mechanism is in
 `astra4-cs9-negotiated-publication-design.md`, agreed.
 
@@ -516,8 +516,8 @@ result. *(The merge commit is filled in when CS-9 lands.)* The decision is D1 of
 and both getters - the base's and the HTTP/2 driver's - read the flag first: `Unknown` with no
 identifier until it is set, the settled value from then on. **It changes no transport error handling.**
 
-**What Linux established** (lane 1, clang debug; the gate's clang release and gcc debug runs are the
-orchestrator's, recorded when CS-9 lands):
+**What Linux established** (lane 1, clang debug; the orchestrator's gate added clang release and gcc
+debug over the 22 affected modules, green 44 of 44 on `bb8d320`):
 - The getter case's red was deterministic, and it is green after the fix.
 - The race it closes was red under ThreadSanitizer in 102 of 102 runs of the committed reader, and in
   none of 50 after the fix, with the positive control reporting in both trees.

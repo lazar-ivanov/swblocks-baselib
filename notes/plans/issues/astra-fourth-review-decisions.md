@@ -1,7 +1,8 @@
 # Astra's fourth review — the decision, and how its change-set lands
 
 **Date:** 2026-09-29. **Status:** D1 taken by the maintainer on 2026-09-29: shape (a″), in which the
-connection publishes the value itself. CS-9 is in lane 1, design note first.
+connection publishes the value itself. **CS-9 landed 2026-09-29**, merged at `5db9ae8`, with its gate
+green (§3). Only the Windows matrix is owed.
 
 **The review:** [`http2-l0-l6-fourth-review-2026-09-28.md`](../http2-l0-l6-fourth-review-2026-09-28.md),
 of `045e889`.
@@ -147,10 +148,57 @@ So any state other than `Connecting` implies a final value.
 
 | Change-set | Finding | Lane | Starts |
 |---|---|---|---|
-| **CS-9** | U01 | lane 1, `astra4-cs9` | D1 taken 2026-09-29; the design note first |
+| **CS-9** | U01 | lane 1, `astra4-cs9` | D1 taken 2026-09-29; the design note first. **Landed** `5db9ae8` (§3) |
 
 The plan gives its files, tests and gate.
 
 ## 3. As it lands
 
-*(To be written when CS-9 lands.)*
+**CS-9 landed 2026-09-29: merged at `5db9ae8`, gate green on `bb8d320`.**
+
+- **The change, `a8d5427`.** `ClientConnectionTaskBaseT` writes the value once, through
+  `publishNegotiated( )`, which then sets `m_isNegotiatedPublished` (seq_cst). Both getters read the flag
+  first, and return `m_unsettled` — `Unknown` with no identifier — until it is set. The HTTP/2 driver's
+  getter delegates to the base's.
+- **The design note**, `astra4-cs9-negotiated-publication-design.md`, was agreed in r4 (`c94496e`) after
+  two Opus review rounds. Its mechanism is r1's; the rounds changed its tests and its text.
+- **The comments** that stated the retired rule are corrected in commits of their own: `f2fcd81`,
+  `021a649`, `264c5f1`, `578dbf7`, and `f5d3468`. `f5d3468`, on `ClientConnection.h`, is 15 lines for 15
+  and preprocess-identical. The checkpoint's text fixes follow: `89eaffe`, `a62a813`, `c457fa6`.
+- **The tests: `utf_baselib_h2client11`**, new.
+  - **The getter case** is red on the unfixed code, deterministically, and green after. It is also the
+    one control which separates (a″) from the withdrawn (a′).
+  - **The ThreadSanitizer pair** reported the race in 102 of 102 runs of the committed reader, and in
+    none of 50 after the fix. The positive control reported in both trees, and the whole module ran
+    instrumented with no report.
+  - **U01's route:** a cancel during a held handshake reports `Unknown`. Its controls report `h2` and
+    `Http11`.
+  - **Runs:** 50 runs of the module were clean. `utf_baselib_h2client`, `…2`, `…3` and
+    `utf_baselib_httpclient` are green at clang debug.
+  - **Size:** 38.0 MB at a64, about 43 to 44 MB on x86. That is over the 40 MB target, and the reason
+    is recorded in the module's `Main.cpp`.
+- **What the reviews found, and where it went:**
+  - **The note's first ThreadSanitizer reader reported in 1 run of 54.** The runtime shares 256 thread
+    slots, which the shadow-cell argument had missed. The reader was rebuilt. The finding became a
+    standing rule in `src/utests/AGENTS.md` (`f01a5e3`), by the maintainer's decision of 2026-09-29.
+  - **Text corrections, folded:**
+    - six CS-6 modules' sizes, recorded in 10^6 bytes: `3d1b1be`, `bdbef1f`, `8afc1dd`, `bc93485`,
+      `91075b1` and `fc1bab5`;
+    - the plan's retry-gate citation, CS-7's ThreadSanitizer explanation, H04b's reason and the size
+      records: `14785b9`.
+  - **Checkpoint C5 and C6 were not taken.** C5's gap is covered by the composed cases and
+    `utf_baselib_h2client`, and C6 is a naming nicety. Neither was worth a rebuild.
+- **Tier 1** is re-captured at `bb8d320`: five cases and one helper namespace were added.
+- **The gate: green, 44 of 44**, 11:31 to 12:08 on `bb8d320`.
+  - It ran clang2010 release and gcc1520 debug over the 21 modules which compile
+    `ClientConnectionTaskBase.h`, and over `utf_baselib_h2client11`.
+  - Each raw log was read independently of the gate's own verdict.
+  - `ClientConnection.h`'s edit is preprocess-identical, so the four modules outside the 21 stayed out.
+  - The evidence directory holds `logs/astra4/gate-astra4-cs9-*` and `logs/astra2/gate/astra4-cs9/`.
+- **The reviews** are in `astra4/reviews/`: the note's two rounds (`cs9-note-r1.md`), the checkpoint
+  (`cs9-checkpoint-r1.md`), and the orchestrator's own first reviews of each.
+- **Owed: only the Windows matrix** — the handoff's D-section, run from a pushed tip containing `5db9ae8`:
+  - D1: run the module whole;
+  - D2: its x86 debug size;
+  - D3: whether it builds at x86 `ccl16` release.
+- **The owed list was swept.** CS-9 closed no row and adds none.

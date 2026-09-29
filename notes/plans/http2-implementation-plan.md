@@ -1,9 +1,9 @@
 # HTTP/2 Client Library: Implementation Plan
 
-**Status, 2026-09-28: layers L0 to L6 are executed and remediated; L7 and L8 are not started.**
+**Status, 2026-09-29: layers L0 to L6 are executed and remediated; L7 and L8 are not started.**
 - **L0 to L6:** executed 2026-09-17 to 2026-09-20. The L6R remediation of astra's first review
-  (§8a) landed after them. The change-sets of astra's second review (CS-1 to CS-6) and third review
-  (CS-7, CS-8) landed on 2026-09-27 and 28 (§8, and their decision records).
+  (§8a) landed after them. The change-sets of astra's second review (CS-1 to CS-6), third review
+  (CS-7, CS-8) and fourth review (CS-9) landed on 2026-09-27 to 29 (§8, and their decision records).
 - **Still owed for them:** only runs on other hosts — the Windows matrix, the x86-64 Linux matrix
   (deferred by the maintainer), and a compile on a devenv2 or devenv3 host — plus the deferrals the
   maintainer took, each recorded (`issues/astra-remediation-owed-work.md`).
@@ -1808,6 +1808,8 @@ orchestrator before planning. The decisions they need are put, and recorded, in
   cover.
 - The orchestrator checked U01 at the source before planning. The decision it needs is put, and
   recorded, in `issues/astra-fourth-review-decisions.md`.
+- **Landed 2026-09-29:** CS-9, shape (a″), merged at `5db9ae8`. Its gate is green on `bb8d320`, 44 of 44.
+  The decision record's §3 has the commits, the review rounds and the evidence.
 
 - **U01 (P2): a request that fails during establishment copies `negotiated( )` while the handshake may
   still be writing it.**
@@ -2044,7 +2046,7 @@ orchestrator before planning. The decisions they need are put, and recorded, in
 
 | Change-set | Finding | Files | Lane |
 |---|---|---|---|
-| **CS-9** | U01 — the negotiated value read before it is published | (a″): `ClientConnectionTaskBase.h` and `Http2ConnectionTask.h`; comments in `ConnectionPool.h` and `HttpClientRequestTask.h`, and line for line in `ClientConnection.h`; the design note; `utf_baselib_h2client11` (new) or a module with headroom; a D-section in `issues/windows-matrix-handoff.md` | lane 1, branch `astra4-cs9` |
+| **CS-9** | U01 — the negotiated value read before it is published | (a″): `ClientConnectionTaskBase.h` and `Http2ConnectionTask.h`; comments in `ConnectionPool.h` and `HttpClientRequestTask.h`, and line for line in `ClientConnection.h`; the design note; `utf_baselib_h2client11` (new) or a module with headroom; a D-section in `issues/windows-matrix-handoff.md` | lane 1, branch `astra4-cs9`; **landed** `5db9ae8` |
 
 **How it runs.** One lane, under the workflow `parallel-implementation-workflow.md`.
 - It started once the maintainer had chosen D1's shape: (a″), taken 2026-09-29. The design note
