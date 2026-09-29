@@ -269,7 +269,7 @@ never report?* Read the raw artifacts too — module exit codes, verdict lines, 
 
 ## Writing a test that is worth its green
 
-These four rules were each paid for. Ignoring one costs a defect that survives review.
+These rules were each paid for. Ignoring one costs a defect that survives review.
 
 **Compose the real components early.** A stub faithful to a published interface is not evidence that
 two components agree. Stubs encode assumptions the real thing may not honour — one probe published
@@ -293,6 +293,20 @@ parallel build.
 **A clean TSan result means nothing without a positive control.** "Clean" and "not instrumented" look
 identical. Build a module with a known report in the same instrumented tree and show it fires — and
 never claim "no ThreadSanitizer line" from a build that was not instrumented.
+
+**A ThreadSanitizer red is a measurement, not a certainty.** The runtime clang ships shares 256 thread
+slots among all threads. A thread which synchronizes with nothing can lose its slot, and its accesses
+then compare as ordered before the other thread's; when the slots are spent, the whole shadow is
+reset. So "four shadow values per word, therefore every run reports" proves nothing: CS-9's first
+reader was built on it and reported in 1 run of 54, where fifty clean runs after the fix would have
+shown nothing.
+- A red/green pair takes 50 runs each way, in one instrumented tree with its positive control. The
+  green weighs only as much as the red's measured rate, so record that rate.
+- Judge each run by the report's two frames, not by any `WARNING` line.
+- To make the red dependable, read as soon after the write as the case allows, and let the racing
+  thread take a lock no other thread takes while it waits, so that it keeps a slot of its own
+  (`notes/plans/issues/astra4-cs9-negotiated-publication-design.md`, §7.2).
+- A deterministic red, where one exists, is still the one to prefer.
 
 **Wait for the thing the assertion is about.** A wait whose predicate differs from the assertion's is
 a flake waiting: a wait for "two records" was satisfied by the peer's own *connected* record, so a
