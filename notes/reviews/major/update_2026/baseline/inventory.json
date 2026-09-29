@@ -9503,6 +9503,66 @@
    "namespaces": []
   },
   {
+   "body_sha": "8c92319349d37da8ec2644765855f65e",
+   "doc_sha": "3d11ff51317a64754864315892facee7",
+   "file": "utf_baselib_h2client11/TestNegotiatedPublication.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1475,
+   "module": "utf_baselib_h2client11",
+   "name": "NegotiatedPublication_ACancelAfterTheHandshakeReportsH2Tests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "41392915cff13cd08565bd1d13256064",
+   "doc_sha": "81886465bece54d230669018978ab5b5",
+   "file": "utf_baselib_h2client11/TestNegotiatedPublication.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1441,
+   "module": "utf_baselib_h2client11",
+   "name": "NegotiatedPublication_ACancelDuringAHeldHandshakeReportsUnknownTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5dc016417479e18c0622d0362f6775c9",
+   "doc_sha": "0e0c805f1de955b1a757fd859dcf8e41",
+   "file": "utf_baselib_h2client11/TestNegotiatedPublication.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1509,
+   "module": "utf_baselib_h2client11",
+   "name": "NegotiatedPublication_AFallbackToHttp11ReportsHttp11Tests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "1b669fda7534a9d5e286f8cfad7f5f70",
+   "doc_sha": "d936fb38adeda5460a9cc1f3c0acd619",
+   "file": "utf_baselib_h2client11/TestNegotiatedPublication.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1331,
+   "module": "utf_baselib_h2client11",
+   "name": "NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "24482e0b46cf844d84d482dd35e9f69e",
+   "doc_sha": "8594dc1266fed39cc2a5d17cd41c7618",
+   "file": "utf_baselib_h2client11/TestNegotiatedPublication.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1245,
+   "module": "utf_baselib_h2client11",
+   "name": "NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "0cdb94396591e0bfaa95701ba0bfcc25",
    "doc_sha": null,
    "file": "utf_baselib2/TestNetUtils.h",
@@ -18692,6 +18752,16 @@
   },
   {
    "conditional_only": false,
+   "file": "utf_baselib_h2client11/TestNegotiatedPublication.h",
+   "guards": [],
+   "label": "namespace negotiatedpublication",
+   "line": 97,
+   "module": "utf_baselib_h2client11",
+   "ns": "utest",
+   "sha": "ad757c1850554706a3c4898d580b9656"
+  },
+  {
+   "conditional_only": false,
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
    "guards": [],
    "label": "namespace h2driver",
@@ -23363,6 +23433,62 @@
    ],
    "notes_index": true
   },
+  "utf_baselib_h2client11": {
+   "data_files": {},
+   "data_literals": [
+    "127.0.0.1"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/http2/Http2ConnectionTask.h>",
+      "<baselib/httpclient/HttpClientRequestTask.h>",
+      "<baselib/httpclient/ClientConnectionTaskBase.h>",
+      "<baselib/httpclient/ClientConnection.h>",
+      "<baselib/httpclient/ClientTypes.h>",
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/TcpTunnelStage.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/ThreadPool.h>",
+      "<baselib/core/Uri.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<atomic>",
+      "<chrono>",
+      "<cstddef>",
+      "<cstdint>",
+      "<memory>",
+      "<string>",
+      "<thread>",
+      "<vector>",
+      "<utests/baselib/Http2DriverTlsProbe.h>",
+      "<utests/baselib/TlsEndingPeer.h>",
+      "<utests/baselib/TlsTeardownTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2client11/TestNegotiatedPublication.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "\"TestNegotiatedPublication.h\""
+     ],
+     "path": "utf_baselib_h2client11/UtfBaselibH2Client11Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "NegotiatedPublication_ACancelAfterTheHandshakeReportsH2Tests",
+    "NegotiatedPublication_ACancelDuringAHeldHandshakeReportsUnknownTests",
+    "NegotiatedPublication_AFallbackToHttp11ReportsHttp11Tests",
+    "NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests",
+    "NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadTests"
+   ],
+   "notes_index": true
+  },
   "utf_baselib_h2client2": {
    "data_files": {},
    "data_literals": [
@@ -27502,6 +27628,13 @@
    "module": "utf_baselib_h2client10",
    "name": "utest",
    "sha": "abc5f19d985dde7c91c53c2221d7396f"
+  },
+  {
+   "file": "utf_baselib_h2client11/TestNegotiatedPublication.h",
+   "line": 95,
+   "module": "utf_baselib_h2client11",
+   "name": "utest",
+   "sha": "fa90601f288d285922964aa536b5a8bc"
   },
   {
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
