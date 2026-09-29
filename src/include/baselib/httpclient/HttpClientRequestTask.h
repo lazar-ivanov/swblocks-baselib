@@ -1899,7 +1899,7 @@ namespace bl
                  * before ALPN resolves can be bounced onto a fallback driver, and the value which
                  * describes the connection the response actually came over is the one that
                  * connection has published by then. The END IS NOT ALWAYS AFTER THE NEGOTIATION,
-                 * though - a request which fails first, while its connection is still establishing,
+                 * though - a request which fails before its connection's handshake has completed
                  * reads Unknown with no identifier. The read is safe either way: the connection
                  * publishes the value itself, and negotiated( ) may be called from any thread at
                  * any time (ClientConnection.h)
