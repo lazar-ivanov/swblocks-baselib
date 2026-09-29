@@ -594,3 +594,21 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
   this revision as the review words them.
 - **Agreed by the orchestrator**, who checks this revision against the review.
 - **The mechanism, §1 to §6, is r1's.** The rounds changed §7 and the text only.
+
+## 9. What the checkpoint review corrected — 2026-09-29, lane 1
+
+*Added after the agreement, for CS-9's checkpoint review (`astra4/reviews/cs9-checkpoint-r1.md`, C2, which
+carries the orchestrator's O1). Nothing here changes a decided shape; each item corrects a figure of §7.4
+with what was measured at the source. MB is 2^20 bytes, as `src/utests/AGENTS.md` counts it.*
+
+- **The module closed at 38.0 MB**, not §7.4's 37.9 MB: 39,802,696 bytes at `e55a92d`
+  (`logs/astra4/cs9/green-e55a92d-build.log`), 17.0 MB over the empty module's floor.
+- **On x86 that is about 43 to 44 MB**, by row 5c's ratio in one unit, 1.13 to 1.17
+  (`windows-matrix-handoff.md`, B14). §7.4's lower bound, 1.11, divides an x86 figure by a 10^6-byte
+  one. Still inferred, not measured.
+- **`utf_baselib_h2client10`'s 37.6 MB is a 10^6-byte figure.** In this unit it is 35.9 MB, 37,607,912
+  bytes at `d13859c` (`logs/astra2/cs6/tip-d13859c/summary.log:6`). So the request task, the pool of one
+  connection and the five cases cost about 2.1 MB. The conclusion stands: the driver is the weight, and a
+  split cannot lower it. The review's 36.1 MB is 37,876,496 bytes from a build of `fff158c` with
+  uncommitted changes (`logs/astra2/cs6/dl31/a2-h2client10-build.log:42`).
+- The same corrections are in `UtfBaselibH2Client11Main.cpp` and in the handoff's D2.
