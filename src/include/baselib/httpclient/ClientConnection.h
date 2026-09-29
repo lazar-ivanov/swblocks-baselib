@@ -358,16 +358,16 @@ namespace bl
              * @brief What this connection speaks, and the ALPN identifier which settled it
              *
              * ONE QUERY AND NOT TWO, so that the protocol and the identifier cannot disagree -
-             * NegotiatedProtocol's own note says why, and says why an empty identifier is a
-             * statement rather than a gap. Unknown with no identifier until ALPN has resolved
+             * NegotiatedProtocol's own note says why, and why an empty identifier is a statement
+             * rather than a gap. It fills BOTH ClientResponse::protocol() and negotiatedAlpn()
              *
-             * This is what fills BOTH ClientResponse::protocol() and
-             * ClientResponse::negotiatedAlpn(). Publishing only the protocol left the second of
-             * those unfillable: a request task can derive "h2" or "http/1.1" from the protocol and
-             * the URL scheme, but that derivation is wrong for a TLS connection whose peer
-             * selected nothing, which must report empty and would derive as "http/1.1" - the one
-             * case the field exists to distinguish. The same defect as the missing status, found
-             * in the same review
+             * A REQUIREMENT ON EVERY IMPLEMENTATION: safe from any thread at any time, with no rule
+             * about state( ) first. Unknown with no identifier until the protocol is settled - by
+             * ALPN in the TLS handshake, or by configuration for cleartext - and then the settled
+             * value. The object a returned reference names is never written afterwards, so a
+             * reference taken while Unknown stays Unknown: a caller which wants a later value asks
+             * again. A driver built after negotiation holds its value const; the HTTP/2 driver,
+             * which IS the establishing task, publishes it (ClientConnectionTaskBase.h)
              */
 
             virtual const NegotiatedProtocol& negotiated() const NOEXCEPT = 0;
