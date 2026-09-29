@@ -1,9 +1,15 @@
 # Astra's third review — the decisions, and how their change-sets land
 
-**Date:** 2026-09-28. **Status:** planned, and reviewed once by fable (`plan-fable-r1.md`, agree with
-changes, all taken). **Both decisions were taken by the maintainer on 2026-09-28, as recommended:**
+**Date:** 2026-09-28. **Status: landed on Linux, 2026-09-28.**
+- CS-8 is merged at `28f7026`.
+- CS-7 is merged at `605b7d9` and gated green on `083898d` (§3).
+- Owed: only CS-7's Windows items, C1 and C2.
+
+The plan was reviewed once by fable (`plan-fable-r1.md`, agree with changes, all taken). **The three
+decisions were taken by the maintainer on 2026-09-28, as recommended:**
 - **D1 (b′):** freeze at completion;
-- **D2:** a mechanical reconciliation clause on `AGENTS.md`'s sweep bullet.
+- **D2:** a mechanical reconciliation clause on `AGENTS.md`'s sweep bullet;
+- **D3:** the size policy names its unit.
 
 CS-8 needed no decision.
 
@@ -144,13 +150,85 @@ history.
 
 ## 2. The change-sets
 
-| Change-set | Finding | Lane | Starts |
+| Change-set | Finding | Lane | Landed |
 |---|---|---|---|
-| **CS-7** | T01 | lane 1, `astra3-cs7` | once D1 is taken |
-| **CS-8** | T02, and where the run's evidence lives | lane 2, `astra3-cs8` | at once; it needs no decision |
+| **CS-7** | T01 | lane 1, `astra3-cs7` | merged at `605b7d9`, gated green |
+| **CS-8** | T02, and where the run's evidence lives | lane 2, `astra3-cs8` | merged at `28f7026`; text only, so no gate |
 
 The plan gives each one's files, tests and gate.
 
 ## 3. As they land
 
-*(To be written as each change-set lands.)*
+### CS-8 — T02, the current-status summaries — merged 2026-09-28
+
+**Merged at `28f7026`** from `astra3-cs8`. It is text only: 21 Markdown files under `notes/plans/`, no
+gate, and tier 1 unaffected, passing after the merge.
+
+**What it reconciled:**
+- **The design:** its security summary (R01, R02, R03, the decoders), and its account of the connect
+  loop. That loop is CS-6's D3, owed-list row I16, not asio's ranged connect.
+- **The decoder deferral**, the L6 record's status table (rows 12, ThreadSanitizer, E1 to E4), the
+  body-sink deferral's E3, the plan's B6 line, and the TaskBase deferral's link 2.
+- **The second review's record:** its head, and where the run's evidence lives. The same pointer is
+  in five more records which cite `logs/`.
+- **Eight older records** whose "nothing implemented" status lines are kept, marked as the status at
+  design time, with what landed.
+- **The owed list's R09 row.**
+
+**Every cited hash was verified,** to exist and to be an ancestor of its merge. `ConnectionPool.h`'s
+stale comment, found by the search, went to CS-7.
+
+**The drift recurred after R09's sweep; the sweep did not miss it.** The lane's `git log -S` showed
+each stale statement was written at or after R09's sweep and was true when written. Each went stale as
+CS-1 to CS-6 and B6 landed, and no change-set's records reached it. That is the gap D2 now closes.
+
+**Reviewed by an Opus reviewer in two rounds.** Round 1 was READY WITH CHANGES. Its Medium finding was
+the R09 row, which predated D2's decision; the lane merged `lazari2` first, then folded every finding.
+Round 2 was READY, and its two optional nits were taken.
+
+### CS-7 — T01, the status pair frozen at completion — merged and gated 2026-09-28
+
+**Merged at `605b7d9`** from `astra3-cs7`, to D1 (b′). Tier 1 was re-captured once (`083898d`), with 4
+lines, identical to the lane's report: two cases added, and one C6 pair for the one namespace member
+they changed.
+
+**The commits:**
+- **The fix** — `980295e`. `applyClosed( )` writes `m_isRetryable` and `m_outcome` only while the task
+  has not completed, and hands its verdict to `releaseConnectionSlot( )` as a parameter. The pool still
+  gets the late verdict, and the late close still releases its slot. A close in the batch of the
+  task's own failure still sets the pair.
+- **The reds:**
+  - `7a664cf`, the contract case, red in 4 of 4 sub-runs on the old code;
+  - `634fd4a`, the same-batch case, whose control, the harmonized guard, is red in both sub-runs;
+  - the ThreadSanitizer pair, red in 50 of 50 runs, with its positive control, and 0 after.
+
+  ThreadSanitizer does not report every such race: the pair shares one 8-byte word with six other
+  flags, ThreadSanitizer keeps four shadow values per word and evicts one when they are full, and one
+  report retires the word's reads (LLVM 20.1.0 `tsan_rtl_access.cpp:156-158`, `:186-188`,
+  `:227-230`). So the case makes four requests, and every run reports.
+- **Comments** — `98ad98d` and `3774a97`. The pair is frozen at completion, and reading it after
+  completion is safe on any thread.
+- **Folded as found:**
+  - `0372820`, `ConnectionPool.h`'s comment, line for line and preprocess-identical;
+  - `053dac2`, D3's sentence in `src/utests/AGENTS.md`;
+  - `47b41d7`, the size records in that unit. `utf_baselib_httpclient` is 35.1 MB (2^20), about 39.6
+    to 41 MB on x86: inferred, and at the target, with its reason in its `Main.cpp`;
+  - `c326663` and `cc780dd`, the Windows handoff's C1 and C2, and unit notes on its A4 and B14 tables.
+    On those tables: B14's upper estimates run about 4.9% high. A4's estimates, and B14's lower ends at
+    1.11, are unaffected, because `…7`'s 10^6 a64 figure cancels the unit. This corrects D3's rationale
+    above, which is kept as the decision was put.
+
+**The gate: green, 14 of 14, on `083898d`.** It ran clang release and gcc debug over the seven modules
+whose objects include `HttpClientRequestTask.h`: `utf_baselib_httpclient`, `…4`, `…5`, `…6`, `…8`, `…9`
+and `…10`, as the compiler's `-MM` found them.
+- It was checked independently of the gate's summary. Cases entered equal cases left, each run
+  printed "No errors detected", and none printed a failure or `leaked`.
+- Every module's case count matches the tier-1 manifest.
+- `ConnectionPool.h`'s other includers are unaffected: the comment fold leaves their preprocessed
+  translation units byte-identical.
+
+**Reviewed by an Opus reviewer in two rounds.** Round 1 was READY WITH CHANGES, with no High or Medium
+finding and no decision on the code. Its O1 became D3. Round 2 was READY, and the reviewer confirmed
+all three of the lane's corrections to its own round-1 wording.
+
+**Owed:** the Windows matrix's C1 and C2, from a pushed tip containing `605b7d9`.

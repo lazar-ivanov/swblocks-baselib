@@ -1663,7 +1663,8 @@ exits are not failures:
   pass;
 - `utf_baselib_plugin` is a library, not an executable.
 
-**Astra's third review, 2026-09-28 — two change-sets, planned 2026-09-28.** The review is
+**Astra's third review, 2026-09-28 — two change-sets, planned and landed 2026-09-28** (CS-8 at
+`28f7026`; CS-7 at `605b7d9`, gated green; the record's §3). The review is
 `http2-l0-l6-third-architecture-security-review-2026-09-28.md`, of `93e2d90`. It found no new P1 and no
 regression introduced by CS-1 to CS-6, and two findings. Both were checked at the source by the
 orchestrator before planning. The decisions they need are put, and recorded, in
@@ -1723,8 +1724,15 @@ orchestrator before planning. The decisions they need are put, and recorded, in
         cannot deliver one.
     - **A ThreadSanitizer pair.** The getters are read between `deliverClosed( )`, which does not
       wait for the drain, and `waitForRelease( )`. There, the late write and the read are ordered by
-      nothing, so ThreadSanitizer reports the race whichever runs first, with no second thread and no
+      nothing, so the race is there to report whichever runs first, with no second thread and no
       timing window. A read before the close, or after the release, is ordered and silent.
+      - ThreadSanitizer does not report every such race: the pair shares one 8-byte word with six
+        other flags, ThreadSanitizer keeps four shadow values per word and evicts one when they are
+        full, and one report retires the word's reads (LLVM 20.1.0 `tsan_rtl_access.cpp:156-158`,
+        `:186-188`, `:227-230`).
+      - So the case makes four requests, and every run reports. *(Corrected 2026-09-28 by CS-7's
+        lane and checkpoint review: this said ThreadSanitizer "reports the race whichever runs
+        first".)*
       - The red is on today's code, and the green after the fix.
       - It runs in a tree with no other build, with its positive control.
   - **Reach:** every direct user of `HttpClientRequestTaskImpl` over both protocols, and every
@@ -1732,8 +1740,8 @@ orchestrator before planning. The decisions they need are put, and recorded, in
     no frozen interface changes.
   - **The gate:** clang release and gcc debug over every module whose `.d` names the header
     (workflow §4.5). Its transport error handling does not change.
-  - **Windows:** only the deterministic case runs there, since ThreadSanitizer does not. It is one
-    line in `windows-matrix-handoff.md`.
+  - **Windows:** only the deterministic cases run there, since ThreadSanitizer does not. They are
+    C1 of `windows-matrix-handoff.md`, with C2 for the module's x86 size.
 - **T02 (P3), recurring: the current-status summaries still describe landed fixes as pending.**
   - **The stale statements, each checked:**
     - `http2-design.md`'s security considerations: R02 is "decided, not yet fixed" (`:1625`), the
@@ -1766,13 +1774,14 @@ orchestrator before planning. The decisions they need are put, and recorded, in
 
 | Change-set | Finding | Files | Lane |
 |---|---|---|---|
-| **CS-7** | T01 — the status getters | `HttpClientRequestTask.h`; the cases in `utf_baselib_httpclient`, measured first; one line in `issues/windows-matrix-handoff.md` | lane 1, branch `astra3-cs7` |
-| **CS-8** | T02 — the status summaries, and where the evidence lives | `http2-design.md`, `issues/http-content-decoders-deferral.md`, `issues/http2-l6-review-record.md`, `issues/astra-remediation-owed-work.md`, `issues/astra-second-review-decisions.md`, and this plan's own stale line. Not the third review's decision record: the orchestrator writes that one as each change-set lands | lane 2, branch `astra3-cs8` |
+| **CS-7** | T01 — the status getters | `HttpClientRequestTask.h`; the cases in `utf_baselib_httpclient`, measured first; one line in `issues/windows-matrix-handoff.md` | lane 1, branch `astra3-cs7`; merged at `605b7d9`, gated green on `083898d` |
+| **CS-8** | T02 — the status summaries, and where the evidence lives | `http2-design.md`, `issues/http-content-decoders-deferral.md`, `issues/http2-l6-review-record.md`, `issues/astra-remediation-owed-work.md`, `issues/astra-second-review-decisions.md`, and this plan's own stale line. Not the third review's decision record: the orchestrator writes that one as each change-set lands | lane 2, branch `astra3-cs8`; merged at `28f7026`, text only |
 
 **How they run.** The two touch disjoint files and run as parallel lanes (workflow
 `parallel-implementation-workflow.md`).
-- **CS-7** starts once the maintainer has chosen T01's shape. Its checkpoint review is by an Opus
-  reviewer, and the orchestrator merges and gates it.
+- **CS-7** started once the maintainer chose T01's shape, (b′). It was reviewed by an Opus reviewer,
+  and merged and gated by the orchestrator. Its gate covered the seven modules whose objects include
+  the header, as the compiler's `-MM` found them.
 - **CS-8** is text only and needs no gate. Its checkpoint review checks every corrected statement
   against its commit.
 - **Both** fold what they find, ask their decisions during the run, and are monitored from launch

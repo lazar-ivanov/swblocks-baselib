@@ -477,11 +477,22 @@ record the tip in the result.
 
 ## Astra's third review, 2026-09-28 — what CS-7 owes Windows
 
+**Run only from a tip the maintainer has pushed** that contains `605b7d9`, CS-7's merge, and record the
+tip in the result. The decisions are in `astra-third-review-decisions.md`.
+
+**What Linux established:**
+- CS-7 is merged at `605b7d9`, and its tier-1 refresh is `083898d`.
+- It is gated green on `083898d`: clang release and gcc debug over the seven modules whose objects
+  include `HttpClientRequestTask.h` (`utf_baselib_httpclient`, `…4`, `…5`, `…6`, `…8`, `…9` and
+  `…10`), 14 of 14.
+- Its reds were deterministic, and its ThreadSanitizer pair was red in 50 of 50 runs and green after.
+- CS-8, merged at `28f7026`, is text only and owes Windows nothing.
+
 - **C1. T01, the status pair frozen at completion:** run `utf_baselib_httpclient`'s
   `HttpClientRequestTask_ACloseAfterTheFailureChangesNoStatusTests` and
-  `HttpClientRequestTask_ACloseInTheFailuresBatchStillSetsTheStatusTests` once, from a pushed tip
-  that contains CS-7's merge. Both are deterministic, and they are all of CS-7 that Windows can run:
-  its ThreadSanitizer pair is Linux-only. CS-7 changes no transport error handling.
+  `HttpClientRequestTask_ACloseInTheFailuresBatchStillSetsTheStatusTests` once. Both are
+  deterministic, and they are all of CS-7 that Windows can run: its ThreadSanitizer pair is
+  Linux-only. CS-7 changes no transport error handling.
 - **C2. `utf_baselib_httpclient`'s x86 debug size.** Record it. CS-7 added 95,056 bytes at a64 clang
   debug, to 36,786,320 - 35.1 MB as `utf_objsize.py` counts - which is about 39.6 to 41 MB on x86 by
   the ratio row 5c measured: inferred, not measured. Its reason is in its `Main.cpp`.
