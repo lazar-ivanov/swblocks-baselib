@@ -1,14 +1,32 @@
 # CS-9 / U01 — the connection publishes its negotiated value: design note
 
-**Date:** 2026-09-29. **Status:** revision 2, written by lane 1, for review. No production code is
+**Date:** 2026-09-29. **Status:** revision 3, written by lane 1, for review. No production code is
 written until this note carries its agreement line.
 
-**Revisions.** r1 `8f1cec6`. **r2 (this)** carries what the tests on today's code found, with nothing in
-the mechanism (§1 to §6) changed:
-- §7.2: r1's premise for the ThreadSanitizer red was wrong - measured, it reported in 1 run of 54. The
-  reader is rebuilt, and its reason is the runtime's slot sharing, read at its source;
-- §7.4: the module is measured, 37.9 MB;
-- §8: the commits so far.
+**Revisions.**
+- r1 `8f1cec6`.
+- r2 `a43477f` carried what the tests on today's code found, with nothing in the mechanism (§1 to §6)
+  changed:
+  - §7.2: r1's premise for the ThreadSanitizer red was wrong - measured, it reported in 1 run of 54. The
+    reader is rebuilt, and its reason is the runtime's slot sharing, read at its source;
+  - §7.4: the module is measured, 37.9 MB;
+  - §8: the commits so far.
+- **r3 (this)** carries review round 1: `astra4/reviews/cs9-note-r1.md`, agree with changes, and the
+  orchestrator's `cs9-note-orchestrator-r1.md`, whose O1 and O2 are the reviewer's R7 and R5.
+  - The orchestrator accepted every finding, and refined R9.
+  - The review agreed §1 to §6's mechanism as written, and no finding changes it.
+  - Each finding was checked at its source before it was taken. Where it was taken:
+    - R1: §7.2 corrects its shadow-cell sentence and cites rates per committed reader; §7.5 makes
+      §7.2 a red/green pair of 50 runs each;
+    - R2: §7.2's verdict is by the report's frames; §7.5 adds a whole-module instrumented run after the
+      fix;
+    - R3: §7.1;
+    - R4, R5 and R6: §6; R5 in §4 and R6 in §3 too;
+    - R7: §7.3;
+    - R8: §7.3 and §7.4, and §8's D-section;
+    - R9, as the orchestrator refined it: §7.5 and §8;
+    - R10: §7, before §7.1;
+    - R11: §1, §2 and §4.
 
 **The decision.** D1 of [`astra-fourth-review-decisions.md`](astra-fourth-review-decisions.md), taken
 by the maintainer on 2026-09-29: shape (a″). `continueAfterConnected( )` writes `m_negotiated` once and
@@ -43,7 +61,8 @@ Re-verified at the source for this note, since a single publication cannot cover
     anything the task sets: `hasHandshakeCompletedSuccessfully( )` (`TcpSslBaseTasks.h:741-744`) asks
     the `AsioSslStreamWrapper`, whose own handshake handler sets its flag (`AsioSslStreamWrapper.h:320`)
     before it transfers to the task's `onHandshakeCompleted( )` (`TcpSslBaseTasks.h:652`). That handler
-    then sets `:659` and `:668` and only then calls the continuation (`:670`). Both flags precede the
+    then sets `:659` and `:666` and only then calls the continuation (`:670`); `:668` sets no flag, it
+    updates the untrusted-endpoint record (`AsioSslStreamWrapper.h:820-842`). Both flags precede the
     write, so the conclusion stands; the citation was imprecise. VERIFIED.
   - **After the fallback's `detachStream( )` the gate reads false**, because the stream is gone
     (`ClientConnectionTaskBase.h:627`, after the write). The retry is still refused, by
@@ -57,10 +76,12 @@ Re-verified at the source for this note, since a single publication cannot cover
   the next endpoint without entering the stage (`:1498-1517`). The tunnel stage calls its stored
   continuation once, when the negotiation reports `Done` (`TcpTunnelStage.h:1628`, `:1786-1806`).
   VERIFIED.
-- **A completed task rescheduled does not run again.** `TaskBase::scheduleNothrow( )` allows a restart
-  (`TaskBase.h:1222-1233`), but the establisher refuses a second run: `m_resolver` is set on the first
-  (`TcpBaseTasks.h:862`) and reset only by the retry (`:1607`), and `:846-851` refuses a set one.
-  VERIFIED.
+- **A task rescheduled after a run which reached the resolve does not run again; one which never
+  reached it wrote nothing.** `TaskBase::scheduleNothrow( )` allows a restart (`TaskBase.h:1222-1233`),
+  but the establisher refuses a second run: `m_resolver` is set on the first (`TcpBaseTasks.h:862`) and
+  reset only by the retry (`:1607`), and `:846-851` refuses a set one. A first run which never reached
+  `:862` - cancelled before it started (`TaskBase.h:1243-1253`), or failed before the resolver was made
+  - can be followed by one establishment, but it wrote nothing itself. VERIFIED.
 
 **So the write happens at most once per task object.** It is guarded by an assertion at the write
 (§3). Had any route written twice, this change-set would have stopped here and gone back to the
@@ -71,16 +92,20 @@ maintainer.
 - **Where:** in the establishment base, beside `m_negotiated`, protected:
   `std::atomic< bool > m_isNegotiatedPublished`, initialized `false` in the constructor's initializer
   list. Never cleared.
-- **Type:** `std::atomic< bool >`, the file's idiom (`m_connectionState` is `std::atomic` in the
-  driver). `ClientConnectionTaskBase.h` gains `#include <atomic>`.
+- **Type:** `std::atomic< bool >`. It is not this file's idiom - `ClientConnectionTaskBase.h` holds no
+  `std::atomic` today - but it is the driver's (`m_connectionState`, `Http2ConnectionTask.h:407-408`)
+  and `TaskBase`'s (`m_cancelRequested`, `TaskBase.h:544`). `ClientConnectionTaskBase.h` gains
+  `#include <atomic>`.
 - **Memory order: the default, seq_cst,** for the store and the load.
   - Release and acquire would be enough for the publication itself: the write, then a store-release;
     a load-acquire which reads `true`, then the read.
   - Nothing in `src/include` names a memory order (grep for `memory_order`: none), and the driver's
     `m_connectionState`, which this flag is ordered against (§5), is seq_cst. A first explicit order in
     the library, for no measurable gain, is a new idiom for every later reader to check.
-  - The cost is one fenced store per connection's lifetime. The load is on the reader's path, and a
-    plain load on x86 either way.
+  - The cost is one store per connection's lifetime, and one load per read. On a64 - this host - seq_cst
+    costs nothing over release and acquire: this clang compiles both loads to `LDARB` and both stores to
+    `STLRB` at `-O2` (`logs/astra4/cs9/codegen/atomics-a64-READ.txt`; VERIFIED). x86 is not measured:
+    this clang has no x86 target.
 
 ## 3. The publication path, and the two getters
 
@@ -101,6 +126,14 @@ void publishNegotiated( SAA_in httpclient::NegotiatedProtocol negotiated )   // 
   case writes the protected member directly to make "written but not published", and calls the helper to
   publish (§7). The production surface grows by one protected function and two protected members; no
   public signature changes.
+- **`m_negotiated` stays protected, and its comment carries the rule for a derived driver** (R6, §6):
+  off the strand it is read only through `negotiated( )`, and a driver which IS this task answers
+  `ClientConnection::negotiated( )` by delegating to it, never by returning the member - which is exactly
+  what U01's own path did (`Http2ConnectionTask.h:3111`, `return base_type::m_negotiated`).
+  - Making it private, with a protected strand-side accessor for `:2755`, was considered and not taken.
+    It would need a test-only writer for §7.1, growing the production surface the brief asks to keep
+    minimal.
+  - Reverses if a derived driver added in L7 or L8 reads the member off the strand.
 - **The assertion is `BL_ASSERT`**, the house's, active in debug builds - where the lane's and the
   gate's debug runs execute every route into the write.
 - **The base's getter** (`:758`) becomes
@@ -116,6 +149,9 @@ void publishNegotiated( SAA_in httpclient::NegotiatedProtocol negotiated )   // 
 
 - **It lives exactly as long as the member it stands in for.** Both getters return a reference, and a
   caller keeping one past the task's life was already broken for `m_negotiated`.
+- **A reference taken before the publication names `m_unsettled` for as long as it is held**, and so
+  stays `Unknown`. That is new - today a held reference names `m_negotiated` and sees later values,
+  racily - and the interface's requirement states it (R5, §6).
 - **No toolchain argument is needed.** A function-local static would rely on thread-safe local statics.
   devenv2's `vc12` lacks them. devenv2 cannot compile this header, though - its OpenSSL is 1.0.2d
   (`projects/make/devenv-detect.mk`) and `:48` refuses anything below 1.1.0 - and devenv3's `vc14` and
@@ -124,8 +160,9 @@ void publishNegotiated( SAA_in httpclient::NegotiatedProtocol negotiated )   // 
 - **No static destruction at exit.** A static `NegotiatedProtocol` holds a `std::string`, which is
   destroyed at exit while a detached thread may still read it. A namespace- or class-scope constant has
   the same exit, plus unordered dynamic initialization for a class template's static member.
-- **The cost:** one `NegotiatedProtocol` per connection task - an enum and an empty `std::string`,
-  about 40 bytes at 64 bits.
+- **The cost:** one `NegotiatedProtocol` per connection task - a 1-byte enum padded to 8, then an empty
+  `std::string`: 32 bytes with libc++, which `clang2010` uses here, and 40 with libstdc++ or MSVC x64.
+  INFERRED from the layout (`ClientTypes.h:108-109`) and those libraries' string sizes.
 
 ## 5. Why nothing a reader relies on weakens
 
@@ -159,14 +196,37 @@ commit of its own after the logic commit:
 
 | Where | What it says now | Correction |
 |---|---|---|
-| `ClientConnectionTaskBase.h:364-369` | "written once … and read afterwards"; the pool and request task read it off the strand | written once, published by the flag; the getter is safe from any thread |
-| `ClientConnectionTaskBase.h:751-756` | `Unknown` until the handshake has completed | `Unknown` until the value is published, then the settled value |
-| `Http2ConnectionTask.h:196-209` | "WHAT negotiated( ) RESTS ON": the publication order and "READ state( ) FIRST" | the connection publishes the value itself; no reader needs a rule |
+| `ClientConnectionTaskBase.h:364-369` | "written once … and read afterwards"; the pool and request task read it off the strand | written once, published by the flag; off the strand read only through `negotiated( )`, and a driver which IS this task delegates to it and never returns the member (R6, text below) |
+| `ClientConnectionTaskBase.h:751-756` | `Unknown` until the handshake has completed | `Unknown` until the value is published, then the settled value; the reference names the value current at the call, and a caller which wants a later value asks again (R5) |
+| `Http2ConnectionTask.h:196-209` | "WHAT negotiated( ) RESTS ON": the publication order and "READ state( ) FIRST" | the connection publishes the value itself; no reader needs a rule. The last sentence, on `freeStreamSlots( )`, stays with a reason of its own (R4, text below) |
 | `Http2ConnectionTask.h:2801-2806` | `Ready` "is what releases" `m_negotiated` | `Ready` follows the value's own publication |
-| `Http2ConnectionTask.h:3102-3107` | "valid once state( ) is not Connecting" | safe at any time; delegates to the base |
+| `Http2ConnectionTask.h:3102-3107` | "valid once state( ) is not Connecting" | safe at any time; delegates to the base; the reference names the value current at the call (R5) |
 | `ConnectionPool.h:1121-1128` | testing `isReady` first is what makes the read safe | it is what decides which entries count (§5) |
 | `HttpClientRequestTask.h:1898-1901` | read at the END "because that is when it is settled" | a request which fails before its connection's handshake completes reads `Unknown` |
-| `ClientConnection.h:357-371` | "Unknown with no identifier until ALPN has resolved"; states no requirement | the requirement on every implementation, line for line |
+| `ClientConnection.h:357-371` | "Unknown with no identifier until ALPN has resolved"; states no requirement | the requirement on every implementation, line for line (R5, text below) |
+
+**`ClientConnectionTaskBase.h:364-369`** (R6), not line for line - the logic commit changes the file:
+
+```
+            /*
+             * Written once, on the strand, by publishNegotiated( ), which then sets
+             * m_isNegotiatedPublished. Off the strand it is read ONLY through negotiated( ), which
+             * reads the flag first: a driver which IS this task answers ClientConnection::negotiated( )
+             * by delegating to it, and never returns this member. A factory-built driver is given the
+             * value at construction, below - the one moment it is in hand - and holds it const
+             */
+```
+
+**The driver's class comment keeps its `freeStreamSlots( )` sentence** (R4).
+- Its "for the same reason" points at the publication order this change-set removes, so it takes a
+  reason of its own:
+
+  > *freeStreamSlots( ) is an atomic because it too is read off the strand: it answers a question about
+  > the session, which is strand state a caller may not touch.*
+
+- The field comment at `Http2ConnectionTask.h:403-405`, "What an off-strand caller is allowed to read -
+  see the class comment", stays true: the class comment goes on saying what an off-strand caller reads -
+  `state( )`, `freeStreamSlots( )`, and `negotiated( )` through the base's publication.
 
 **Left as they are, because they are still true:** `ConnectionPool.h:549-553` (the h2 driver's reads
 are atomic loads and a reference, still, and take no lock); `Http1ConnectionTask.h:174-176` and the test
@@ -174,22 +234,63 @@ double's `TestClientConnectionTaskBase.h:397` (both `const` members, which a con
 `HttpClientRequestTask.h:868-873`, `:1636-1639` and `:1977-1981`, and `ClientConnection.h:602-608` and
 `ClientConnectionTaskBase.h:608-623` (none states the rule or the premise); `TestClientContracts.h:1310`
 and `TestHttpClientRequestTask.h:1531`, `:2466` (about `ClientResponse`'s single door and the probe's
-refusal).
+refusal). The review's own search found three more, still true and left as well: `ClientTypes.h:69` and
+`:100` ("before ALPN has resolved", which is when `Unknown` is still what a getter returns), and
+`ConnectionPool.h:1746-1750` (a request submitted before ALPN resolves is bounced retryable on the
+fallback), with `ConnectionPool.h:1552` (what `isReady` witnesses).
 
-**`ClientConnection.h:357-371`, line for line.** The block is 15 lines and stays 15. It keeps "one
-query and not two" and what the value fills, shortens the history of the missing identifier to a
-pointer - `NegotiatedProtocol`'s own note already carries it - and adds the requirement: safe from any
-thread at any time; `Unknown` with no identifier until the protocol is settled, by ALPN in the handshake
-or by configuration for cleartext; never changed after it is settled. The evidence is
-preprocess-identical output for two dependent translation units, before and after, as CS-7 showed its
-own comment edits (`logs/astra3/cs7/connectionpool-comment-preprocess-identical.log`): one outside the
-21-module gate (`utf_baselib_httpclient2`) and one inside it, plus a control which adds a line and must
-differ. If it cannot be shown, the gate takes the four modules outside the 21.
+**`ClientConnection.h:357-371`, line for line** (R5). The block is 15 lines and stays 15.
+- It keeps "one query and not two" and what the value fills, and shortens the history of the missing
+  identifier to a pointer: `NegotiatedProtocol`'s own note already carries it.
+- It adds the requirement on every implementation:
+  - safe from any thread at any time;
+  - `Unknown` with no identifier until the protocol is settled, then the settled value;
+  - **the object a returned reference names is never written afterwards**, so a caller which wants a
+    later value asks again. Today a held reference always named `m_negotiated` and saw later values,
+    racily. After (a″) one taken before the publication names `m_unsettled` and stays `Unknown`. That is
+    safe, and new, and it is the invariant every implementation now keeps. No reader holds one today:
+    `ConnectionPool.h:1134` and `HttpClientRequestTask.h:884` read `.protocol( )` at once, and `:1906`
+    copies. VERIFIED.
+- The text, starting from the reviewer's draft - 15 lines, the widest 100 columns, which is the file's
+  own widest:
+
+```
+            /**
+             * @brief What this connection speaks, and the ALPN identifier which settled it
+             *
+             * ONE QUERY AND NOT TWO, so that the protocol and the identifier cannot disagree -
+             * NegotiatedProtocol's own note says why, and why an empty identifier is a statement
+             * rather than a gap. It fills BOTH ClientResponse::protocol() and negotiatedAlpn()
+             *
+             * A REQUIREMENT ON EVERY IMPLEMENTATION: safe from any thread at any time, with no rule
+             * about state( ) first. Unknown with no identifier until the protocol is settled - by
+             * ALPN in the TLS handshake, or by configuration for cleartext - and then the settled
+             * value. The object a returned reference names is never written afterwards, so a
+             * reference taken while Unknown stays Unknown: a caller which wants a later value asks
+             * again. A driver built after negotiation holds its value const; the HTTP/2 driver,
+             * which IS the establishing task, publishes it (ClientConnectionTaskBase.h)
+             */
+```
+
+- **The evidence**, as CS-7 showed its own comment edits
+  (`logs/astra3/cs7/connectionpool-comment-preprocess-identical.log`):
+  - preprocess-identical output for two dependent translation units, before and after: one outside the
+    21-module gate (`utf_baselib_httpclient2`) and one inside it;
+  - a control which adds one line and must differ;
+  - the comment-only checker, `astra4/lane1-chk-comment-diff.sh`, on the commit.
+
+  If it cannot be shown, the gate takes the four modules outside the 21.
 
 ## 7. The tests
 
 All five are in one new module (§7.4). `tls_stream_t` is the stranded TLS policy of the shared
 `Http2DriverTlsProbe.h`.
+
+**The plan's other control, the HTTP/1.1 driver's constant, needs no new case** (R10).
+`Http1ConnectionTask.h` does not change: its value is a `const` member (`:174-179`), returned at
+`:2570-2573`. `TestHttp1ConnectionTask.h:180` and `:187` assert it - `Http11`, no identifier - in
+`utf_baselib_httpclient3`, which is one of the gate's 21 (`logs/astra4/deps-ClientConnectionTaskBase.txt`).
+VERIFIED.
 
 ### 7.1 The deterministic getter case — the red for the contract
 
@@ -204,6 +305,18 @@ All five are in one new module (§7.4). `tls_stream_t` is the stranded TLS polic
 - After the fix, each type also calls `publishNegotiated( )` with the value, and a thread started
   afterwards reads each getter and gets `Http2` and `"h2"`. The thread's start orders the read after
   the publication; what this pins is that a published value is what every reader gets.
+- **On the driver, this publish half is the one control which separates (a″) from the withdrawn
+  (a′)** (R3).
+  - An unstarted driver reads `Connecting` (`Http2ConnectionTask.h:431`).
+  - (a′) returned the default while `Connecting` (decision record, D1, `:77-79`).
+  - (a″) reads the settled value from the moment it is published, before `Ready` (`:94-96`,
+    `:134-136`). Here that is read with the state still `Connecting`.
+  - No other case here tells the two apart:
+    - the composed cases read after `Ready`, after `Closed`, or with nothing written;
+    - the reader of §7.2 loops until the value is settled, so it passes under (a′) too.
+
+    So a later "simplification" to return the default while `Connecting` would pass every other test
+    in the module. INFERRED from those VERIFIED lines.
 
 ### 7.2 The ThreadSanitizer pair — the red for the race
 
@@ -229,10 +342,25 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
   - **What r1 said.** r1's reader took no lock and read in a loop from before the driver started. It
     reasoned: "At most three threads touch that byte's word ... so ThreadSanitizer's four shadow cells
     still hold the write" - so every run would report.
-  - **What was measured.** 1 run in 54 reported. A count showed about 20,000 concurrent reads in every
-    run, so the reads were not missing.
-  - **What r1 missed: the slots.** The premise held for the shadow cells. ThreadSanitizer v3 shares 256
-    slots among the threads (`tsan_defs.h:58`).
+  - **What was measured.** 1 run in 54 reported, all at `65cf086`. A count showed about 20,000
+    concurrent reads in every run, so the reads were not missing.
+  - **The shadow cells were enough here, but not for r1's reason** (R1). Shadow values are kept per slot,
+    epoch, byte mask and kind, not per thread (`tsan_shadow.h`; the runtime files cited here are archived
+    in `logs/astra4/cs9/tsan-src/`, with their checksums).
+    - Before the reader reads, this byte's word holds three:
+      - the allocation's 8-byte write (`tsan_mman.cpp:260-276`, then `tsan_rtl_access.cpp:633-639`);
+      - the constructor's 1-byte write - both of these the constructing thread's;
+      - the strand's write at `:656`.
+    - The strand's own read at `Http2ConnectionTask.h:2755` adds a fourth only when a release separates
+      it from the write. Nothing does while trace logging is off - `BL_LOG`'s `isEnabled( )` takes no lock
+      (`Logging.h:494-498`, `:299-305`) - and it is off in these runs, whose level is `LL_DEBUG`, the UTF
+      default (`UtfArgsParser.h:540`). So `ContainsSameAccess( )` skips that read: it falls in the write's
+      epoch (`tsan_rtl_access.cpp:172-192`).
+    - Either way, four cells hold them all, and nothing is evicted before the reader's read. A fifth
+      value would evict one chosen by trace position (`:195-232`).
+    - VERIFIED at the runtime's source and the library's. What r1 missed is not here.
+  - **What r1 missed: the slots.** ThreadSanitizer v3 shares 256 slots among the threads
+    (`tsan_defs.h:58`).
     - A slot handed from one thread to another keeps its sid and its epoch (`tsan_rtl.cpp:252-321`), and
       a thread learns that it lost its slot only at its next synchronization (`:357-375`).
     - When every slot's 14-bit epoch is spent, the whole shadow is reset (`:233-280`).
@@ -241,20 +369,30 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
       ordered before the write (`tsan_rtl_access.cpp:218`).
     - A TLS handshake spends slots fast. VERIFIED at the runtime's source and by the runs.
 - **Hence the construction above:** the read follows the write by tens of microseconds, from a slot of
-  the reader's own.
-  - A second construction let the reader go once the driver's opening write had ended, a round trip
-    after the write, and it reported in 101 runs of 102. That window is long enough for a handover or a
-    reset to lose the write's record.
-  - The committed one reported in 102 of 102 (`4451fd0`). Every report is the reader's read
-    (`TestNegotiatedPublication.h:409`) against the write at `ClientConnectionTaskBase.h:656`, made
-    holding the task lock.
+  the reader's own. The rates, per committed reader - each commit's own runs first, then the same
+  source's runs before it was committed:
+
+  | Reader | At the commit | The same source, before its commit |
+  |---|---|---|
+  | `65cf086`: spins through the handshake (r1) | 1 of 54 | - |
+  | `b644819`: let go once the opening write has ended, a round trip after the write | 50 of 51 (1 of 1; then 49 of 50, run 12 clean) | 51 of 51 |
+  | `4451fd0`: let go by the strand's signal, just after the write - the reader now in the tree | 51 of 51 (1 of 1; then 50 of 50) | 51 of 51 (blob `a493b53`, the committed one) |
+
+  - `b644819`'s window, a round trip, is long enough for a handover or a reset to lose the write's
+    record; `4451fd0`'s has not lost it in 102 runs.
+  - Every report is the reader's read (`TestNegotiatedPublication.h:409`) against the write at
+    `ClientConnectionTaskBase.h:656`, made holding the task lock (M0 in the report is `TaskBase::m_lock`,
+    first taken in `scheduleNothrow( )`).
   - The positive control reported in the same tree. The whole module under ThreadSanitizer gives that
     report and no other.
+  - `eba918d` changes one comment line of the test, one for one, after these runs. Its code, and every
+    line number in it, are `4451fd0`'s.
+  - The logs are `logs/astra4/cs9/tsan-red-*`; `tsan-red-READ.txt` reads them.
 - **What is certain and what is measured.**
   - The race is certain at the source.
   - What the instrument sees is not certain by construction, because its runtime can drop the record of
-    either access. So this red is a measurement, 102 of 102, with the reason a miss stays possible
-    recorded.
+    either access. So this red is a measurement - 102 reports in 102 runs of the committed reader - with
+    the reason a miss stays possible recorded, and it is paired with a green of 50 runs (§7.5).
   - The deterministic red for the contract is §7.1's.
 - **Why the fixed run cannot report, which is certain by construction.**
   - The reader's first read loads the flag. When it reads `true` it synchronizes with the store which
@@ -266,20 +404,43 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
   what a `protocol( )` read shows holds for a copy. The composed cases (§7.3) are what copy the whole
   value, through the request task.
 - **The build:** `BL_CLANG_ENABLE_RA_TSAN=1` in an emptied clang debug tree, `TSAN_OPTIONS` set
-  explicitly, as CS-7's (`second_deadlock_stack=1` and the suppressions file). The positive control is
-  `utf_baselib_basictask` in the same tree, whose race at `TestBaselibBasicTask.h:127` must report. The
-  verdict is read from `WARNING: ThreadSanitizer` lines, not from the exit code, and the tree is emptied
-  afterwards.
+  explicitly, as CS-7's (`second_deadlock_stack=1` and the suppressions file, which holds one `deadlock:`
+  entry and suppresses no race). The positive control is `utf_baselib_basictask` in the same tree, whose
+  race at `TestBaselibBasicTask.h:127` must report. The tree is emptied afterwards.
+- **The verdict is read from the report, not from the exit code** (R2).
+  - **A red** is a report whose two accesses are this read (`OffStrandReader::run( )` →
+    `NegotiatedProtocol::protocol( )`) and the write under `continueAfterConnected( )`
+    (`ClientConnectionTaskBase.h:656`, through `NegotiatedProtocol::operator=`), in either order: at
+    `65cf086` the write was the current access and the read the previous one; since `b644819` the
+    reverse.
+  - **A green** is no report at all.
+  - **Any other report is a finding**: it is folded into this change-set and counts as neither.
 
 ### 7.3 The composed cases — U01's route, and its controls
 
 - **The harness.** What dispatches a request onto an establishing connection is the pool, under
   `ridePreface` (`ConnectionPool.h:1733-1762`). Composed with the request task and a real driver, that
-  pool is the session's harness, and those modules are over the target (`utf_baselib_httpclient5` and
-  `…10`, 47.5 MB). What the pool hands the request is the `Connecting` driver itself. So the cases use
-  a one-connection test pool, as `utf_baselib_httpclient8` does: it answers every `acquire( )` with the
-  driver, posted as the contract requires, and records `releaseStream( )`. The request task and the
-  driver are the real ones.
+  pool is the session's harness, and those modules are over the target (`utf_baselib_httpclient5`,
+  47.5 MB, and `…10`, 46.7 MB, each at a64). What the pool hands the request is the `Connecting` driver
+  itself.
+- **So the cases use a pool of one connection written in this module, `OneDriverPool`** (R7).
+  - `utf_baselib_httpclient8`'s `OneConnectionPool` (`TestHttp1DriverTlsTruncation.h:130`) is that
+    module's own and may not be included here.
+  - It was not moved into the shared tree either. It records event strings and has no rendezvous, where
+    these cases need a count of acquires, each release's outcome, and a wait for a release. Moving it would
+    also change `httpclient8`'s files for no case of its own.
+  - So `OneDriverPool` is a new class, not a copy. It answers every `acquire( )` with the driver,
+    posted as the contract requires; counts the acquires; records each `releaseStream( )`'s outcome; and
+    lets a case wait for the first release.
+  - The request task and the driver are the real ones.
+- **What `OneDriverPool` does not exercise, and where that is covered.**
+  - **Not exercised here:** the pool's own decision to let a request ride (`ConnectionPool.h:1733-1762`),
+    and its release accounting.
+  - **The decision to ride:** `utf_baselib_h2client4`, `TestConnectionPoolRetiredEntry.h:141` and
+    `:227` - a replayable request rides the preface, and an unreplayable one does not; and
+    `utf_baselib_httpclient4`, `TestClientSession.h:2055` - the session's rider across the fallback.
+  - **The release accounting:** `TestConnectionPool.h:1186` and `:1966`, in `utf_baselib_h2client4`.
+  - VERIFIED: each case read at its line.
 - **The driver** is `Http2DriverProbe`, derived in the module to signal once `submit( )` has returned a
   handle, and once `beginPreHandshakeStage( )` has returned - the handshake begun.
 - **"Rides the preface" is certain, not raced.** The request task is pushed first, and the driver only
@@ -312,30 +473,54 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
 
 - `utf_baselib_h2client11`, new and reserved for this lane: `Main.cpp`, `notes.txt` with a recipe per
   case, and the `devenv7_only` marker - the stranded policies need Boost 1.72.
-- **Measured: 37.9 MB at a64 clang debug**, 16.9 MB over the empty module's floor, and under the 40 MB
-  target (39,731,232 bytes at `65cf086`, 39,771,872 at `eba918d`; `utf_objsize.py` in
-  `logs/astra4/cs9/red-*-build.log`). By the ratio win-x86 debug has shown over a64 clang debug (1.11
-  to 1.17), it is about 42 to 44 MB on x86 - inferred, not measured.
+- **Measured: 37.9 MB at a64 clang debug**, 16.9 MB over the empty module's floor (39,731,232 bytes at
+  `65cf086`, 39,771,872 at `eba918d`; `utf_objsize.py` in `logs/astra4/cs9/red-*-build.log`).
+- **That is under the target at a64 and over it where the policy measures** (R8).
+  `src/utests/AGENTS.md` sets the 40 MB target on x86 debug, and by the ratio win-x86 debug has shown
+  over a64 clang debug (1.11 to 1.17) this module is about 42 to 44 MB there - INFERRED, not measured.
+  So the reason is recorded in `Main.cpp`, as the policy asks, and as `utf_baselib_h2client9` and `…10`
+  record theirs.
 - **What it pays for:** the HTTP/2 driver over the stranded TLS policy, as r1 expected. The request
   task, which r1 expected to cost more, is the small part: `utf_baselib_h2client10` carries the driver
   and no request task, and is 37.6 MB.
-- **A split cannot lower it**, since every case instantiates the driver. `Main.cpp` records the size and
-  its reason, as `utf_baselib_h2client9` and `…10` record theirs. The D-section of
-  `windows-matrix-handoff.md` gives the a64 size and the x86 estimate.
+- **A split cannot lower it**, since every case instantiates the driver.
+- **The D-section of `windows-matrix-handoff.md`** gives the a64 size and the x86 estimate. It also asks
+  whether the module builds at x86 `ccl16` release, which object size does not govern
+  (`src/utests/AGENTS.md`, "The x86 release caveat").
 - `utf_baselib_httpclient14` stays reserved and unused.
 
 ### 7.5 Runs
 
-- 50 runs of the five cases after the fix, at clang debug. This is the default regression count; no
-  rate is the criterion here.
-- **§7.1 is deterministic:** red once (done, `65cf086`), green once after the fix.
-- **§7.2's red is measured** (above). Its green is certain by construction, and is shown by one run
-  and 50, with the positive control in the same tree.
-- Then `utf_baselib_h2client`, `…2`, `…3` and `utf_baselib_httpclient`, one at a time; and tier 1, with
-  its report explained in the lane's journal.
-- Tier 1 at `eba918d` reports six lines, all additions: the five cases (C1) and the module's helper
-  namespace (C6). The orchestrator re-captures the baseline after integration
-  (`logs/astra4/cs9/tier1-eba918d.log`).
+**Which tree** (R9, as the orchestrator refined it).
+- **Every run which validates the change-set is taken on the tree after the comment commits** (§8), so
+  that what it validates is what merges. The comment edits outside `ClientConnection.h` move lines, and
+  with them the `__LINE__` values `BL_CHK_T` and `BL_NOEXCEPT_END` bake into the code after them: a run
+  on the tree before them is not a run on what merges.
+- **Before the comments, only what is needed to see the fix work:** one ordinary build and run of the
+  module after the logic commit, and again after the publish half is added.
+
+**What runs, on that tree:**
+- **§7.1 is deterministic.** It is shown red once, which is done (`65cf086`, and again at `eba918d`),
+  and green once, by construction.
+- **§7.2 is a red/green pair which is not deterministic** (R1). It takes the default, 50 runs each way.
+  - **The red is done:** 50 of 50 in `4451fd0`'s batch, plus the same blob's 50 of 50 and the two single
+    runs (§7.2's table). The tree was emptied before them, and the positive control was built and run in
+    it.
+  - **The green is 50 runs after the fix, with no report in any**, in a tree emptied again, with the
+    positive control built and reporting in it.
+  - **The green weighs only as much as the red's rate.** Against r1's reader, which reported in 1 run of
+    54, fifty clean runs would have shown nothing. The committed reader missed in none of its 102 runs,
+    so fifty clean runs in a row would need a miss rate the red never showed.
+  - **Then the whole module once, in the same instrumented tree** (R2). The composed cases are what copy
+    the whole value through the request task. Any report there is judged as §7.2 says: a finding, not a
+    red or a green.
+- **§7.3 green once**, then **50 runs of the module's five cases**: the default regression count, since
+  no rate is the criterion here.
+- **Then the existing modules, one at a time:** `utf_baselib_h2client`, `…2`, `…3` and
+  `utf_baselib_httpclient`.
+- **Then tier 1**, with every line of its report explained in the lane's journal. At `eba918d` it
+  reports six lines, all additions: the five cases (C1) and the module's helper namespace (C6)
+  (`logs/astra4/cs9/tier1-eba918d.log`). The orchestrator re-captures the baseline after integration.
 
 ## 8. Commits
 
@@ -345,14 +530,26 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
 2. `65cf086` tests: the new module - §7.1's red half, r1's reader, §7.3's characterizations.
 3. `b644819` and `4451fd0` tests: the reader rebuilt twice (§7.2).
 4. `eba918d` comments: a count in the reader's comment corrected.
-5. This revision.
+5. `a43477f` this note, r2.
+6. This revision, r3.
 
 **To come, in order:**
 
 1. The note's dated agreement line, once the orchestrator sends it.
-2. Logic: `ClientConnectionTaskBase.h` (flag, default, helper, getter, `<atomic>`) and
-   `Http2ConnectionTask.h` (the getter delegates). Evidence: §7.1 green, §7.3 green, §7.2 green.
-3. Tests: §7.1's publish half.
-4. Comments, one commit per file, per §6.
-5. The D-section of `windows-matrix-handoff.md`: the deterministic cases run on Windows; ThreadSanitizer
-   does not.
+2. **Logic:** `ClientConnectionTaskBase.h` (flag, default, helper, getter, `<atomic>`) and
+   `Http2ConnectionTask.h` (the getter delegates). Run only to see the fix work (§7.5): the module
+   once, with §7.1 green.
+3. **Tests:** §7.1's publish half, and the module once, to see it green.
+4. **Comments, one commit per file, per §6.**
+   - Each commit is checked comment-only (`astra4/lane1-chk-comment-diff.sh`).
+   - `ClientConnection.h`'s is shown preprocess-identical, with its control.
+5. **On the tree after 4, every validating run of §7.5, in its order:**
+   - §7.1 green;
+   - §7.2's 50 green and the whole-module instrumented run, with the positive control;
+   - §7.3 green, and the module's 50 runs;
+   - the four existing modules;
+   - tier 1.
+6. **The D-section of `windows-matrix-handoff.md`:**
+   - the deterministic cases run on Windows; ThreadSanitizer does not;
+   - the module's a64 size and its x86 estimate;
+   - whether it builds at x86 `ccl16` release (R8).
