@@ -363,10 +363,11 @@ namespace bl
             const ClientConnectionConfig                                        m_config;
 
             /*
-             * Written once, on the strand, in continueAfterConnected, and read afterwards. The
-             * DRIVER's own copy is the one which must be const - negotiated() returns a reference
-             * and the pool and the request task read it off the strand - and the driver is given
-             * the value at construction, below, which is the one moment it is in hand
+             * Written once, on the strand, by publishNegotiated( ), which then sets
+             * m_isNegotiatedPublished. Off the strand it is read ONLY through negotiated( ), which
+             * reads the flag first: a driver which IS this task answers ClientConnection::negotiated( )
+             * by delegating to it, and never returns this member. A factory-built driver is given the
+             * value at construction, below - the one moment it is in hand - and holds it const
              */
 
             httpclient::NegotiatedProtocol                                      m_negotiated;
@@ -800,8 +801,10 @@ namespace bl
             /**
              * @brief What the connection speaks and the identifier which settled it
              *
-             * Default constructed - HttpProtocol::Unknown with no identifier - until the handshake
-             * has completed and ALPN has been read
+             * Safe from any thread at any time. Default constructed - HttpProtocol::Unknown with no
+             * identifier - until the value is published ( publishNegotiated( ) ), and then the settled
+             * value. The reference names an object which is never written afterwards: one taken before
+             * the publication stays Unknown, so a caller which wants a later value asks again
              */
 
             auto negotiated() const NOEXCEPT -> const httpclient::NegotiatedProtocol&
