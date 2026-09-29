@@ -37,6 +37,7 @@
 #include <baselib/core/BaseIncludes.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -261,30 +262,36 @@ namespace utest
          */
 
         /**
-         * @brief A thread which reads a connection's negotiated( ) once, after the handshake has
+         * @brief A thread which reads a connection's negotiated( ) just after the handshake has
          * settled it, with nothing ordering the read after the write
          *
          * THE READ IS AFTER THE WRITE IN TIME AND IN NO HAPPENS-BEFORE. The thread is created before
          * the driver is scheduled, and from then until its read it acquires nothing the strand, or
          * anything ordered after the strand's write, has released:
          *
-         *   - it is let go by go( ), a RELAXED store, which the case makes only once it has seen the
-         *     driver's opening write end - after the write, in time. It waits for it by spinning on a
-         *     relaxed load. A relaxed store and load are not synchronization, to the C++ model or to
+         *   - it is let go by go( ), a RELAXED store, which the case makes as soon as the strand says
+         *     the value is written ( NegotiatedSignalProbe ) - after the write, in time, by tens of
+         *     microseconds. A relaxed store and load are not synchronization, to the C++ model or to
          *     ThreadSanitizer, and that is the only reason they are relaxed;
-         *   - it then locks and unlocks a mutex which no other thread ever takes. That orders it after
-         *     nothing but its own past. What it is for is ThreadSanitizer's: a thread which has
-         *     synchronized with nothing for a while can have its slot taken over by another, whose
-         *     identity it would then share, and the lock makes it take a slot of its own before the
-         *     read;
-         *   - then it reads, once, records what it read and signals.
+         *   - while it waits, and before each read, it locks and unlocks a mutex which no other thread
+         *     ever takes. That orders it after nothing but its own past. What it is for is
+         *     ThreadSanitizer's own bookkeeping: see below;
+         *   - then it reads protocol( ) until it is not Unknown - once, today - records it and signals.
          *
-         * WHY NOT READ IN A LOOP WHILE THE HANDSHAKE RUNS, which is what this first did: measured, a
-         * thread which spins without synchronizing loses its slot to the churn of a TLS handshake, and
-         * the thread which takes the slot over carries its identity and epoch forward - so reads made
-         * before the takeover look ordered before the write, and no report comes. One run in 54
-         * reported (logs/astra4/cs9/tsan-red-65cf086*, tsan-diag1-reads-x10.txt). A single read made
-         * after the write, from a slot of its own, is checked against the write itself
+         * WHY IT IS BUILT THIS WAY, measured and read at the runtime's source (compiler-rt 20.1.0,
+         * tsan_rtl.cpp, FindSlotAndLock( ) and SlotAttachAndLock( )). ThreadSanitizer v3 shares 256
+         * slots among the threads. A slot handed from one thread to another keeps its identity and its
+         * epoch, and when every slot is spent the whole shadow is reset. So an access can lose the
+         * record which would show it racing: a thread which synchronizes with nothing for a while has
+         * its slot taken over, and a reset can wipe the write. Both are the churn of a TLS handshake,
+         * and both need time:
+         *
+         *   - read in a loop while the handshake runs, the race reported in 1 run of 54;
+         *   - read once, let go when the driver's opening write ended - a round trip after the write -
+         *     it reported in 99 of 100;
+         *   - so the read now follows the write by as little as the case can make it, and the waiting
+         *     thread keeps taking a slot of its own. The runs this was measured by are in
+         *     logs/astra4/cs9/
          *
          * protocol( ) AND NOT A COPY OF THE WHOLE VALUE: a torn copy of the std::string could crash
          * where a read of the enum only reports, and a report is the verdict. The flag which publishes
@@ -296,6 +303,11 @@ namespace utest
             BL_NO_COPY_OR_MOVE( OffStrandReader )
 
         public:
+
+            enum : long
+            {
+                WAIT_STEP_IN_MICROSECONDS           = 20L,
+            };
 
             explicit OffStrandReader( SAA_in const bl::om::ObjPtr< bl::httpclient::ClientConnection >& connection )
                 :
@@ -352,8 +364,23 @@ namespace utest
 
         private:
 
+            /**
+             * @brief Takes a ThreadSanitizer slot of its own, ordered after nothing but this thread
+             */
+
+            void touchOwnLock()
+            {
+                BL_MUTEX_GUARD( m_ownLock );
+            }
+
             void run()
             {
+                /*
+                 * WAITING, paced by a short sleep: so that this thread neither starves the handshake
+                 * on a small host nor spends its own slot's epochs, and still answers go( ) within tens
+                 * of microseconds
+                 */
+
                 while( ! m_isGo.load( std::memory_order_relaxed ) )
                 {
                     if( m_isAbandoned.load( std::memory_order_relaxed ) )
@@ -361,16 +388,37 @@ namespace utest
                         return;
                     }
 
+                    touchOwnLock();
+
+                    std::this_thread::sleep_for( std::chrono::microseconds( WAIT_STEP_IN_MICROSECONDS ) );
+                }
+
+                /*
+                 * READING, until the value is settled - today the first read is
+                 */
+
+                for( ;; )
+                {
+                    if( m_isAbandoned.load( std::memory_order_relaxed ) )
+                    {
+                        return;
+                    }
+
+                    touchOwnLock();
+
+                    const auto protocol = m_connection -> negotiated().protocol();
+
+                    if( bl::httpclient::HttpProtocol::Unknown != protocol )
+                    {
+                        m_seen = protocol;
+
+                        m_read.signal();
+
+                        return;
+                    }
+
                     std::this_thread::yield();
                 }
-
-                {
-                    BL_MUTEX_GUARD( m_ownLock );
-                }
-
-                m_seen = m_connection -> negotiated().protocol();
-
-                m_read.signal();
             }
 
             const bl::om::ObjPtr< bl::httpclient::ClientConnection >            m_connection;
@@ -394,6 +442,53 @@ namespace utest
 
             bl::cpp::SafeUniquePtr< bl::os::thread >                            m_thread;
         };
+
+        /**
+         * @brief The shared driver probe, which also signals as soon as its value is written
+         *
+         * onProtocolNegotiated( ) is what continueAfterConnected( ) calls once it has written the value
+         * - and, with the fix, published it - on the strand, in the same handler. So the signal follows
+         * the write by a function call, and a case which waits for it can let a reader go within tens
+         * of microseconds of the write
+         */
+
+        class NegotiatedSignalProbe : public Http2DriverProbe
+        {
+            BL_DECLARE_OBJECT_IMPL( NegotiatedSignalProbe )
+
+        public:
+
+            typedef Http2DriverProbe                                            base_type;
+
+        protected:
+
+            OneShotSignal                                                       m_negotiated;
+
+            NegotiatedSignalProbe(
+                SAA_in          bl::httpclient::ConnectionKey                   key,
+                SAA_in          base_type::factory_ptr_t                        driverFactory
+                )
+                :
+                base_type( BL_PARAM_FWD( key ), BL_PARAM_FWD( driverFactory ) )
+            {
+            }
+
+            virtual bool onProtocolNegotiated() OVERRIDE
+            {
+                m_negotiated.signal();
+
+                return base_type::onProtocolNegotiated();
+            }
+
+        public:
+
+            bool waitForNegotiated() const
+            {
+                return m_negotiated.waitFor( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) );
+            }
+        };
+
+        typedef bl::om::ObjectImpl< NegotiatedSignalProbe >                     NegotiatedSignalProbeImpl;
 
         /*************************************************************************************
          * U01's route: the request task over the real driver
@@ -1161,9 +1256,10 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadT
  * strand did, reads the real driver's negotiated( ) once a real handshake has settled it, and sees h2
  *
  * The case passes on both sides of the fix. Its verdict is the sanitizer's: today the reader reads the
- * byte continueAfterConnected( ) wrote, after the write and with no happens-before from it - see
- * OffStrandReader - so the read is reported against the write. After the fix its load of the published
- * flag reads true, and synchronizes with the store which follows the write, before it reads the value
+ * byte continueAfterConnected( ) wrote, just after the write and with no happens-before from it - see
+ * OffStrandReader and NegotiatedSignalProbe - so the read is reported against the write. After the fix
+ * its load of the published flag reads true, and synchronizes with the store which follows the write,
+ * before it reads the value
  */
 
 UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests )
@@ -1179,7 +1275,7 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValue
 
     TlsEndingPeer peer( script );
 
-    const auto driver = Http2DriverProbeImpl::createInstance(
+    const auto driver = NegotiatedSignalProbeImpl::createInstance(
         makeTlsKey( peer.port() ),
         std::make_shared< factory_t >()
         );
@@ -1187,8 +1283,9 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValue
     const auto connection = om::qi< ClientConnection >( driver );
     const auto task = om::qi< Task >( driver );
 
-    bool isQuiet = false;
+    bool isNegotiated = false;
     bool isRead = false;
+    bool isQuiet = false;
     bool isStopped = false;
 
     HttpProtocol seen = HttpProtocol::Unknown;
@@ -1208,11 +1305,10 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValue
                 eq -> push_back( task );
 
                 /*
-                 * The opening write ends after the value was written, in the same chain of strand
-                 * handlers - so the reader is let go after the write, in time
+                 * The strand has written the value: the reader is let go after the write, in time
                  */
 
-                isQuiet = driver -> waitForQuiet( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) );
+                isNegotiated = driver -> waitForNegotiated();
 
                 reader.go();
 
@@ -1222,6 +1318,13 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValue
                 {
                     seen = reader.seen();
                 }
+
+                /*
+                 * The driver is cancelled once its opening write is over, which is the ending
+                 * utf_baselib_h2client10 characterizes
+                 */
+
+                isQuiet = driver -> waitForQuiet( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) );
 
                 task -> requestCancel();
 
@@ -1237,25 +1340,27 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValue
     }
 
     const std::string readings =
-        std::string( "quiet " ) +
-        ( isQuiet ? "yes" : "no" ) +
+        std::string( "negotiated " ) +
+        ( isNegotiated ? "yes" : "no" ) +
         ", read " +
         ( isRead ? "yes" : "no" ) +
         ", saw " +
         protocolName( seen ) +
+        ", quiet " +
+        ( isQuiet ? "yes" : "no" ) +
         ", stopped " +
         ( isStopped ? "yes" : "no" ) +
         ", peer " +
         joinRecords( peer.records() );
 
-    chkOrFail( isQuiet, "the driver's opening write never ended; " + readings );
+    chkOrFail( isNegotiated, "the handshake never settled a protocol; " + readings );
 
     chkOrFail(
         isRead && HttpProtocol::Http2 == seen,
         "the reader did not read the settled h2; " + readings
         );
 
-    chkOrFail( isStopped, "the driver did not run to its end; " + readings );
+    chkOrFail( isQuiet && isStopped, "the driver did not run to its end; " + readings );
 }
 
 /**
