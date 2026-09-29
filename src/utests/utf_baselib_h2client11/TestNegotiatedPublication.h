@@ -281,11 +281,11 @@ namespace utest
 
         /**
          * @brief A thread which reads a connection's negotiated( ) just after the handshake has
-         * settled it, with nothing ordering the read after the write
+         * settled it, with nothing of its own ordering the read after the write
          *
-         * THE READ IS AFTER THE WRITE IN TIME AND IN NO HAPPENS-BEFORE. The thread is created before
-         * the driver is scheduled, and from then until its read it acquires nothing the strand, or
-         * anything ordered after the strand's write, has released:
+         * THE READ FOLLOWS THE WRITE IN TIME, AND ONLY THE FIXED GETTER ORDERS IT AFTER THE WRITE. The
+         * thread is created before the driver is scheduled, and from then until its read it acquires
+         * nothing the strand, or anything ordered after the strand's write, has released:
          *
          *   - it is let go by go( ), a RELAXED store, which the case makes as soon as the strand says
          *     the value is written ( NegotiatedSignalProbe ) - after the write, in time, by tens of
