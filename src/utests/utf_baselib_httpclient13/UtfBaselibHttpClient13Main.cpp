@@ -42,7 +42,7 @@
  * notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) is
  * about 41 to 43 MB on x86 - inferred, not measured; the Windows handoff measures it. The weight is
  * the HTTP/1.1 driver, the plain connection establisher and SimpleHttpSslTask. This module takes no
- * further cases
+ * further cases. MB above are 10^6 bytes; as utf_objsize.py counts: 35.2 MB, about 40-41 on x86
  *
  * The module is devenv7+ only: the stranded policies #error on a Boost older than 1.72, and the
  * devenv7_only marker next to this file is what keeps it out of the build on devenv2-6

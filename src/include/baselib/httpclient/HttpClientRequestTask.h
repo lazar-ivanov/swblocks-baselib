@@ -168,11 +168,11 @@ namespace bl
          * ONE CALL LEAVES UNDER THE TASK LOCK AND EVERY OTHER ONE DOES NOT. A drain has three
          * phases: apply the events under the task lock, run what they decided to call out with the
          * lock released, then decide completion under the lock again and notify with it released.
-         * consumed( ), provideBody( ), cancel( ), releaseStream( ), the caller's BodySink and
-         * BodySource, and notifyReady( ) itself are all in the middle phase. That is rule L4 in the
-         * direction this task is responsible for, it keeps the caller's own callbacks off our lock,
-         * and it is what makes notifyReady( ) legal at all, since TaskBase requires it not be
-         * called under the lock
+         * consumed( ), provideBody( ), cancel( ), releaseStream( ) and the caller's BodySink and
+         * BodySource are in the middle phase, and notifyReady( ) comes after the third - behind a
+         * second cancel( ) when a deferred action threw. That is rule L4 in the direction this task
+         * is responsible for, it keeps the caller's own callbacks off our lock, and it is what makes
+         * notifyReady( ) legal at all, since TaskBase requires it not be called under the lock
          *
          * THE ONE EXCEPTION IS submit( ), AND IT IS AN EXCEPTION BY CHOICE, FOR SAME-BATCH
          * ORDERING. This comment used to say "by necessity", on the argument that a deferred
@@ -381,8 +381,12 @@ namespace bl
             cpp::ScalarTypeIniter< bool >                                       m_isOutstandingCapExceeded;
 
             /*
-             * Everything below is the task's own state and is touched only from the drain, under
-             * the task lock
+             * Everything below is the task's own state, and after construction only the drain
+             * writes it - under the task lock, or in the deferred phase where a member's comment
+             * says so - except m_threadPool, which scheduleTask( ) sets under the mailbox lock. The
+             * getters under "What the caller reads afterwards" read it with no lock: every field
+             * they return is frozen at completion, and sinkDelivered( ) says where such a read is
+             * safe
              */
 
             om::ObjPtr< ThreadPool >                                            m_threadPool;
@@ -894,7 +898,7 @@ namespace bl
                      * and by the pairing rule at releaseConnectionSlot( ) none is needed
                      */
 
-                    releaseConnectionSlot( event.connection, deferred );
+                    releaseConnectionSlot( event.connection, m_outcome.value(), deferred );
 
                     return;
                 }
@@ -955,7 +959,7 @@ namespace bl
 
                     failWith( std::current_exception(), false /* isExpected */ );
 
-                    releaseConnectionSlot( event.connection, deferred );
+                    releaseConnectionSlot( event.connection, m_outcome.value(), deferred );
 
                     releaseConnection( event.connection, deferred );
 
@@ -1023,7 +1027,7 @@ namespace bl
                             );
                     }
 
-                    releaseConnectionSlot( event.connection, deferred );
+                    releaseConnectionSlot( event.connection, m_outcome.value(), deferred );
 
                     /*
                      * No stream was opened, so no onClosed( ) will ever arrive to let go of the
@@ -1561,13 +1565,33 @@ namespace bl
                 }
 
                 m_isStreamClosed = true;
-                m_isRetryable = event.isRetryable;
 
                 cancelAllTimers();
 
                 const om::ObjPtrCopyable< ClientConnection > connection( m_connection );
 
-                m_outcome = outcomeOnClosed( event );
+                const auto outcome = outcomeOnClosed( event );
+
+                /*
+                 * WHAT THE CALLER READS IS FROZEN AT COMPLETION - D1 (b') of astra's third review,
+                 * T01, which is I8's principle applied to the last two fields a caller reads.
+                 * isRetryable( ) and outcome( ) are read with no lock by a caller which has seen the
+                 * task complete, and nothing orders such a read against a close applied after it -
+                 * so a close drained in a LATER batch than the failure which completed the task
+                 * writes neither. It is still applied: its slot goes back, with the connection's
+                 * verdict passed to the pool as it is, and the connection is let go
+                 *
+                 * THE GUARD IS m_isCompleted ALONE, and m_isCompletionPending is left out on purpose.
+                 * A close drained in the SAME batch behind the task's own failure still writes both -
+                 * isOwnFailure( ) says what that means - and a pending completion never spans two
+                 * batches: the last phase of the batch which sets it completes it ( applyEvents( ) )
+                 */
+
+                if( ! m_isCompleted )
+                {
+                    m_isRetryable = event.isRetryable;
+                    m_outcome = outcome;
+                }
 
                 /*
                  * THE SINK IS TOLD SOMETHING ONLY WHEN THIS CLOSE IS THE ANSWER, and both halves
@@ -1578,8 +1602,8 @@ namespace bl
                  *
                  * The COMPLETION FLAGS are answerOnClosed( )'s own first line, and the batch
                  * [ Expired, Closed ] is why they are here too: a timeout applied by applyStopped( )
-                 * fails the request without touching m_outcome, so a clean close behind it in the
-                 * same batch still reads Completed - and the caller holding a TimeoutException
+                 * fails the request and decides nothing about the close, so a clean close behind it
+                 * in the same batch still reads Completed - and the caller holding a TimeoutException
                  * would have its sink told the body was complete
                  *
                  * SO A SINK GETS NO TERMINAL CALLBACK WHEN THE REQUEST FAILS, deliberately: the
@@ -1590,7 +1614,7 @@ namespace bl
 
                 if(
                     m_bodySink &&
-                    RequestOutcome::Completed == m_outcome &&
+                    RequestOutcome::Completed == outcome &&
                     ! m_isCompletionPending &&
                     ! m_isCompleted
                     )
@@ -1605,7 +1629,7 @@ namespace bl
                         );
                 }
 
-                releaseConnectionSlot( connection, deferred );
+                releaseConnectionSlot( connection, outcome, deferred );
 
                 answerOnClosed( event );
 
@@ -2132,10 +2156,17 @@ namespace bl
              *
              * INVALID_STREAM_HANDLE is what the pool is then told, and that is honest: it names no
              * stream because there was none, and the pool logs it rather than accounting with it
+             *
+             * THE OUTCOME IS PASSED IN and not read off m_outcome, because the two part company
+             * once the task has completed: a close applied after that leaves m_outcome as the
+             * task completed with it ( applyClosed( ) ), and the pool is still owed what the
+             * connection did - ConnectionUnusable is what retires a connection which died under the
+             * stream. The acquire paths pass m_outcome, which is what this read when it read it
              */
 
             void releaseConnectionSlot(
                 SAA_in          const om::ObjPtrCopyable< ClientConnection >&   connection,
+                SAA_in          const RequestOutcome                            outcome,
                 SAA_inout       std::vector< cpp::void_callback_t >&            deferred
                 )
             {
@@ -2146,7 +2177,6 @@ namespace bl
 
                 const om::ObjPtrCopyable< ConnectionPool > pool( m_pool );
                 const auto handle = m_handle.value();
-                const auto outcome = m_outcome.value();
 
                 const auto held = connection;
 
@@ -2396,14 +2426,31 @@ namespace bl
              * ClientRequest::isReplayable( ), and a replay needs both. False for a request which
              * succeeded, which is not a statement about it
              *
-             * Read it with isOwnFailure( ): a close applied behind a failure of this task's own still
-             * sets it, and says what the connection did afterwards
+             * Read it with isOwnFailure( ): a close applied in the same batch behind a failure of
+             * this task's own still sets it, and says what the connection did afterwards
+             *
+             * FROZEN AT COMPLETION, with outcome( ) - D1 (b') of astra's third review. A close
+             * applied in a later batch, after the task has completed, changes neither, so both are
+             * safe to read on any thread once the task is seen to have completed; sinkDelivered( )
+             * says where that is
              */
 
             bool isRetryable() const NOEXCEPT
             {
                 return m_isRetryable;
             }
+
+            /**
+             * @brief How this request ended for its connection - Completed, Failed or
+             * ConnectionUnusable, as ClientConnection.h defines them
+             *
+             * Frozen at completion with isRetryable( ), and safe to read wherever that is. After a
+             * failure of the task's own - isOwnFailure( ) - it is what a close drained in the same
+             * batch said, or the Failed it was made with, which is no statement about the connection.
+             * A close applied after completion still hands the pool its own verdict
+             * ( releaseConnectionSlot( ) ), so the two can then differ: this one is the request as it
+             * completed
+             */
 
             RequestOutcome outcome() const NOEXCEPT
             {
@@ -2421,11 +2468,14 @@ namespace bl
              * and what it would take to permit one instead is
              * notes/plans/issues/body-sink-terminal-callback-and-reset-deferral.md
              *
-             * WHERE IT IS SAFE TO READ, which is the same place isRetryable( ) and outcome( ) are:
-             * off a hop which has completed, from continuationTask( ), with no task lock. The last
-             * write is offerToSink( )'s in the deferred phase, and applyEvents( ) notifies ready
-             * only after that phase and after the locked section behind it, so the completion edge
-             * orders the write before any such read
+             * WHERE IT IS SAFE TO READ, which is where isRetryable( ), outcome( ), hasSinkThrown( )
+             * and isOwnFailure( ) are too: on any thread, with no task lock, once the hop is seen to
+             * have completed - in its continuationTask( ), after waiting for it on its queue, or
+             * from its state. The last write is offerToSink( )'s in the deferred phase, and
+             * applyEvents( ) notifies ready only after that phase and after the locked section
+             * behind it, so the completion edge orders the write before any such read - and no
+             * write follows it: a completed hop's sink is offered nothing more, and the other
+             * four are frozen at completion too
              */
 
             std::size_t sinkDelivered() const NOEXCEPT
@@ -2459,7 +2509,9 @@ namespace bl
              * is the connection's - a close with an error code, a refused submit - may be. A close
              * drained in the same batch behind a failure of the task's own still writes what
              * isRetryable( ) and outcome( ) report, but it says what the connection did afterwards
-             * and not why the request failed. False for a request which succeeded
+             * and not why the request failed; one drained in a later batch, after the task has
+             * completed, writes neither - they are frozen at completion ( applyClosed( ) ). False
+             * for a request which succeeded
              *
              * NOT THE SAME READING AS hasSinkThrown( ), which refuses a replay even when the failure
              * which won was the connection's: a sink which threw is spent either way

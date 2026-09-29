@@ -357,6 +357,11 @@ record the tip in the result.
   | `utf_baselib_httpclient12` | 35.6 MB | about 39.7 MB |
   | `utf_baselib_h2client8` | 35.4 MB | about 39 MB |
 
+  The a64 figures here are MB of 10^6 bytes, not the 2^20 which `utf_objsize.py`, the size gate and
+  `src/utests/AGENTS.md` use, in which each reads about 4.6% lower: `…8`'s 36,844,520 bytes are
+  35.1 MB. The estimates are unaffected: each scales by `…7`'s ratio, whose a64 figure, 34.1, is
+  10^6 too, so that unit cancels.
+
   `…5` grew 9,088 bytes with the re-pin, and was already over the target.
 - **A5. CS-3's `utf_baselib_h2client8`.** Run it whole, five cases. Nothing in it is expected to
   differ on Windows: D6 and D7 are boundary inputs, and the two DATA-block cases run a driver against
@@ -458,5 +463,25 @@ record the tip in the result.
   | `utf_baselib_httpclient9` | 40.1 MB, over the target since CS-4 | not estimated |
   | `utf_baselib_httpclient5`, `…10` | as CS-5 left them | not estimated |
 
+  The a64 figures here are MB of 10^6 bytes, except `…9`'s, which is already 2^20 (42,023,512
+  bytes) - the unit `utf_objsize.py`, the size gate and `src/utests/AGENTS.md` use. In it the others
+  read about 4.6% lower: `…13` is 36,931,648 bytes at `d13859c`, 35.2 MB. The estimates scale by
+  1.11 to 1.17, and only the upper ratio is measured in one unit: row 5c of
+  `astra-remediation-owed-work.md` measures 1.13 to 1.17, while 1.11 is `…7`'s x86 figure over its
+  10^6 a64 one. In one unit, 1.13 to 1.17 puts `…13` at about 40 to 41 MB.
+
   **If any module measures above about 45 MB,** the maintainer's D-B reverses for the splittable
   ones: `tasks3`, `httpclient13` and `http3`. Report it.
+
+---
+
+## Astra's third review, 2026-09-28 — what CS-7 owes Windows
+
+- **C1. T01, the status pair frozen at completion:** run `utf_baselib_httpclient`'s
+  `HttpClientRequestTask_ACloseAfterTheFailureChangesNoStatusTests` and
+  `HttpClientRequestTask_ACloseInTheFailuresBatchStillSetsTheStatusTests` once, from a pushed tip
+  that contains CS-7's merge. Both are deterministic, and they are all of CS-7 that Windows can run:
+  its ThreadSanitizer pair is Linux-only. CS-7 changes no transport error handling.
+- **C2. `utf_baselib_httpclient`'s x86 debug size.** Record it. CS-7 added 95,056 bytes at a64 clang
+  debug, to 36,786,320 - 35.1 MB as `utf_objsize.py` counts - which is about 39.6 to 41 MB on x86 by
+  the ratio row 5c measured: inferred, not measured. Its reason is in its `Main.cpp`.

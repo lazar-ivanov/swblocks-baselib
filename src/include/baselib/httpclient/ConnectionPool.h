@@ -571,9 +571,9 @@ namespace bl
          * ------------------------------------------------------------------------------------
          *
          * Design 5.7's connect deadline covers "TCP connected through preface" and says so: it is
-         * armed inside the connect completion handler, so the resolve and the async_connect are
+         * armed inside the connect completion handler, so the resolve and the connect loop are
          * outside it. What bounds THOSE is the operating system, which is not one number - the
-         * resolver query is all_matching, so async_connect walks every address returned and a
+         * resolver query is all_matching, so the connect loop walks every address returned and a
          * black-holed one costs a full SYN timeout each, measured at 134 s on this host at the
          * Linux default tcp_syn_retries of 6, and the establisher's handshake retry buys a second
          * pass over the lot. So an origin which drops SYNs holds a Connecting placeholder, and
