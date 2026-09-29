@@ -766,12 +766,12 @@ namespace utest
          * - a deferred action of the batch which applies the close - so it is ordered after that
          * batch's writes, and a close which wrote the pair is certain to show
          *
-         * FOUR REQUESTS, AND ThreadSanitizer IS ONE REASON. The pair shares one 8-byte shadow word
-         * with six flags the drain reads and writes as it goes; ThreadSanitizer keeps four cells per
-         * word and evicts one when they are full, and one report retires the word's reads - so a
-         * racing reading is not reported on every request, and the pair's two races report as
-         * one. Before the fix about one request in seven went unreported, and every run of the four
-         * reported: 50 of 50, never fewer than two
+         * FOUR REQUESTS, AND ThreadSanitizer IS ONE REASON. The pair shares one 8-byte word of memory
+         * with six flags the drain reads and writes as it goes; ThreadSanitizer keeps four shadow
+         * values for a word and evicts one when they are full, and one report retires the word's
+         * reads - so a racing reading is not reported on every request, and the pair's two races
+         * report as one. Before the fix about one request in seven went unreported, and every run
+         * of the four reported: 50 of 50, never fewer than two
          *
          * TWO CLOSES, ONE FOR EACH FIELD. A connection loss published as Draining reads
          * ConnectionUnusable, which is what outcome( ) would take; a close marked retryable is what

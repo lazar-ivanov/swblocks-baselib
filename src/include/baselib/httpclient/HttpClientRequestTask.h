@@ -168,11 +168,11 @@ namespace bl
          * ONE CALL LEAVES UNDER THE TASK LOCK AND EVERY OTHER ONE DOES NOT. A drain has three
          * phases: apply the events under the task lock, run what they decided to call out with the
          * lock released, then decide completion under the lock again and notify with it released.
-         * consumed( ), provideBody( ), cancel( ), releaseStream( ), the caller's BodySink and
-         * BodySource, and notifyReady( ) itself are all in the middle phase. That is rule L4 in the
-         * direction this task is responsible for, it keeps the caller's own callbacks off our lock,
-         * and it is what makes notifyReady( ) legal at all, since TaskBase requires it not be
-         * called under the lock
+         * consumed( ), provideBody( ), cancel( ), releaseStream( ) and the caller's BodySink and
+         * BodySource are in the middle phase, and notifyReady( ) comes after the third - behind a
+         * second cancel( ) when a deferred action threw. That is rule L4 in the direction this task
+         * is responsible for, it keeps the caller's own callbacks off our lock, and it is what makes
+         * notifyReady( ) legal at all, since TaskBase requires it not be called under the lock
          *
          * THE ONE EXCEPTION IS submit( ), AND IT IS AN EXCEPTION BY CHOICE, FOR SAME-BATCH
          * ORDERING. This comment used to say "by necessity", on the argument that a deferred
@@ -381,8 +381,12 @@ namespace bl
             cpp::ScalarTypeIniter< bool >                                       m_isOutstandingCapExceeded;
 
             /*
-             * Everything below is the task's own state and is touched only from the drain, under
-             * the task lock
+             * Everything below is the task's own state, and after construction only the drain
+             * writes it - under the task lock, or in the deferred phase where a member's comment
+             * says so - except m_threadPool, which scheduleTask( ) sets under the mailbox lock. The
+             * getters under "What the caller reads afterwards" read it with no lock: every field
+             * they return is frozen at completion, and sinkDelivered( ) says where such a read is
+             * safe
              */
 
             om::ObjPtr< ThreadPool >                                            m_threadPool;
@@ -2155,9 +2159,9 @@ namespace bl
              *
              * THE OUTCOME IS PASSED IN and not read off m_outcome, because the two part company
              * once the task has completed: a close applied after that leaves m_outcome as the
-             * caller last read it ( applyClosed( ) ), and the pool is still owed what the connection
-             * did - ConnectionUnusable is what retires a connection which died under the stream.
-             * The acquire paths pass m_outcome, which is what this read when it read it
+             * task completed with it ( applyClosed( ) ), and the pool is still owed what the
+             * connection did - ConnectionUnusable is what retires a connection which died under the
+             * stream. The acquire paths pass m_outcome, which is what this read when it read it
              */
 
             void releaseConnectionSlot(
@@ -2440,9 +2444,12 @@ namespace bl
              * @brief How this request ended for its connection - Completed, Failed or
              * ConnectionUnusable, as ClientConnection.h defines them
              *
-             * Frozen at completion with isRetryable( ), and safe to read where it is. A close applied
-             * after completion still hands the pool its own verdict ( releaseConnectionSlot( ) ), so
-             * the two can then differ: this one is the request as it completed
+             * Frozen at completion with isRetryable( ), and safe to read wherever that is. After a
+             * failure of the task's own - isOwnFailure( ) - it is what a close drained in the same
+             * batch said, or the Failed it was made with, which is no statement about the connection.
+             * A close applied after completion still hands the pool its own verdict
+             * ( releaseConnectionSlot( ) ), so the two can then differ: this one is the request as it
+             * completed
              */
 
             RequestOutcome outcome() const NOEXCEPT
