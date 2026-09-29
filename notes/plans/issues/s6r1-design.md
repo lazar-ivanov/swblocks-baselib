@@ -299,6 +299,13 @@ add an `"::1"` sibling. Pure unit, no network.
 
 **Change.** Swap the `&&` operands so `entry->isReady` is tested first. One line.
 
+*(2026-09-29: since CS-9 of Astra's fourth review, the connection publishes its negotiated value
+itself, and `negotiated( )` is safe to read at any time, so this order no longer guards a race. It
+stays because it decides which connections count. A fallen-back h2 task reports `Http11` from its
+handshake onwards and never publishes `Ready`. Without `isReady` first, it would raise the key's
+limit before the pool had adopted the HTTP/1.1 driver which replaces it. See
+`astra4-cs9-negotiated-publication-design.md` §5.)*
+
 **Why only half.** H04a — the unsynchronised publication of the driver pointer itself — is a
 genuinely different size and is deferred to S6R.3. Half B reads an enum; half A is smart-pointer
 publication. This change-set takes the free half and says so.

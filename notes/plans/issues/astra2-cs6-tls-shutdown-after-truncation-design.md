@@ -414,7 +414,9 @@ the consumers of §5 do: one asks the predicate and ends clean (the drivers), on
   unchanged and stay in the focused set.
   *(Recorded 2026-09-28: they went to two siblings, because the three consumer cases in one module
   measured 45.0 MB — the HTTP/1.1 driver and SimpleHttpTask to `utf_baselib_httpclient13` (36.8 MB), the
-  HTTP/2 driver to `utf_baselib_h2client9` (37.6 MB), reserved by the orchestrator. The HTTP/2 driver
+  HTTP/2 driver to `utf_baselib_h2client9` (37.6 MB), reserved by the orchestrator. *(2026-09-29: MB here
+  is 10^6 bytes. `src/utests/AGENTS.md` records sizes in 2^20 bytes, in which these read about 4.6% lower:
+  the 45.0 MB is 45,012,488 bytes, 42.9 MB; `logs/astra4/cs9/sizes-units.txt`.)* The HTTP/2 driver
   writes its preface as soon as the handshake is done, and an ending which met that write in flight
   would take the driver's forced `initiateClose( )`, which runs no TLS shutdown at all
   (`Http2ConnectionTask.h:2873-2880`) — which is why its case waits for the write to be over.)*

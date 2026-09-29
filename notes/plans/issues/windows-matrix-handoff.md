@@ -470,6 +470,11 @@ record the tip in the result.
   `astra-remediation-owed-work.md` measures 1.13 to 1.17, while 1.11 is `…7`'s x86 figure over its
   10^6 a64 one. In one unit, 1.13 to 1.17 puts `…13` at about 40 to 41 MB.
 
+  *(2026-09-29, CS-9: each of these modules' `Main.cpp` now records its size in 2^20 bytes, with row
+  5c's ratio. `tasks3` 35.2 MB, about 40–41 MB on x86; `tasks4` 30.4 MB at `8866065`, about 34–36;
+  `http3` 34.4, about 39–40; `httpclient13` 35.2, about 40–41; `h2client9` 35.7, about 40–42;
+  `h2client10` 35.9, about 41–42. Bytes and sources: `logs/astra4/cs9/sizes-units.txt`.)*
+
   **If any module measures above about 45 MB,** the maintainer's D-B reverses for the splittable
   ones: `tasks3`, `httpclient13` and `http3`. Report it.
 

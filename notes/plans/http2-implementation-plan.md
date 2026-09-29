@@ -1742,7 +1742,10 @@ orchestrator before planning. The decisions they need are put, and recorded, in
         `:186-188`, `:227-230`).
       - So the case makes four requests, and every run reports. *(Corrected 2026-09-28 by CS-7's
         lane and checkpoint review: this said ThreadSanitizer "reports the race whichever runs
-        first".)*
+        first".)* *(2026-09-29: the measurement stands, 50 of 50 red and 0 of 50 green; the
+        explanation is incomplete. The runtime also shares 256 thread slots, and a thread which
+        synchronizes with nothing can lose the comparison. CS-9 found it; see `src/utests/AGENTS.md`,
+        "A ThreadSanitizer red is a measurement".)*
       - The red is on today's code, and the green after the fix.
       - It runs in a tree with no other build, with its positive control.
   - **Reach:** every direct user of `HttpClientRequestTaskImpl` over both protocols, and every
@@ -1823,6 +1826,10 @@ orchestrator before planning. The decisions they need are put, and recorded, in
   - **The rule it breaks is written down, in one place.** The HTTP/2 driver's class comment says:
     read `state( )` first. A reader which observes anything other than `Connecting` has a
     happens-before with the write, and one which observes `Connecting` must not look.
+    *(2026-09-29: CS-9 retired this rule. The connection now publishes the value itself, and
+    `negotiated( )` is safe from any thread at any time. The pool still tests `isReady` first, but
+    for which connections count, not for the read's safety. See
+    `issues/astra4-cs9-negotiated-publication-design.md` §5.)*
     - The pool obeys it: H04b tests `isReady` first (`ConnectionPool.h:1131`).
     - The request task does not, at either of its readers.
       - **`completeResponse( )`, `:1906`: a reachable race.** This is U01.
@@ -1839,7 +1846,10 @@ orchestrator before planning. The decisions they need are put, and recorded, in
     - `m_negotiated` is written at most once per task. `continueAfterConnected( )` is the handshake
       handler's continuation. That handler sets `m_isHandshakeCompleted` first
       (`TcpSslBaseTasks.h:659`), and the only restart of establishment is gated on the handshake not
-      having completed (`TcpBaseTasks.h:1596`).
+      having completed (`TcpBaseTasks.h:1596`). *(Corrected 2026-09-29 by CS-9's design note §1: the
+      restart's gate is not `:659` but the stream wrapper's own flag, which
+      `hasHandshakeCompletedSuccessfully( )` reads (`TcpSslBaseTasks.h:741-744`, set at
+      `AsioSslStreamWrapper.h:320`). Both are set before the continuation, so the conclusion stands.)*
     - `publishState( )` is monotone and seq_cst. `Ready` is published once, at
       `Http2ConnectionTask.h:2808`, after the write and in the same handler.
     - Every `Draining` and `Closed` site (`:1457`, `:1489`, `:1688`, `:1698`, `:2210`, `:2500`,
@@ -1990,7 +2000,8 @@ orchestrator before planning. The decisions they need are put, and recorded, in
         lock. So nothing the drain's second phase also takes can order the write after the read.
       - The case waits for `submit`, cancels, then starts the publisher.
       - The probe's value shares no word with anything else, so one request reports every run; CS-7
-        needed four.
+        needed four. *(2026-09-29: not so. The shadow-cell argument misses the runtime's slot
+        sharing, and the first reader built on it reported in 1 run of 54. CS-9's design note §7.2.)*
       - There is a reported race before the fix, and none after, in a tree with no other build and
         with its positive control.
   - **The module, for (a″).** The cases need the real driver, and its probe and TLS peer are already

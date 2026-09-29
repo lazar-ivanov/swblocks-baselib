@@ -426,7 +426,8 @@ This is the Windows matrix owed for CS-6.
   connect deadline, the HTTP server's timers, the HTTP/2 characterization, D2's — go in a new numbered
   sibling, which the orchestrator reserves for CS-6: `utf_baselib_httpclient13` (36.8 MB) and
   `utf_baselib_h2client9` (37.7 MB) are near the 40 MB target, where `src/utests/AGENTS.md` says not to add
-  (both measured at the tip, `sizes.txt`). The sibling takes the next free number in its family, and it —
+  (both measured at the tip, `sizes.txt`). *(2026-09-29: MB here is 10^6 bytes. `src/utests/AGENTS.md`
+  records sizes in 2^20 bytes, in which these read about 4.6% lower; `logs/astra4/cs9/sizes-units.txt`.)* The sibling takes the next free number in its family, and it —
   like `utf_baselib_tasks3` when it grows — is measured before each case is committed and kept comfortably
   under 40 MB, with its figures in `sizes.txt` first; if one sibling would not stay under, the cases split
   across two.
@@ -771,4 +772,6 @@ corrects or completes a claim of §7, §4(c) or §9 with what was measured at th
   (the HTTP server's timers and D2), `utf_baselib_h2client10` (the HTTP/2 characterization and the connect
   deadline). At the tip, a64 clang debug: 31.7, 36.1 and 37.6 MB; `utf_baselib_tasks3` is 36.9 MB
   (`logs/astra2/cs6/sizes.txt`, `tip-d13859c/summary.log`). *(Updated 2026-09-28: `utf_baselib_tasks4`
-  also carries D-A's test, and is 31.9 MB with it, `751c34e`.)*
+  also carries D-A's test, and is 31.9 MB with it, `751c34e`.)* *(2026-09-29: these figures are 10^6
+  bytes; each module's `Main.cpp` now records its size in the 2^20 unit of `src/utests/AGENTS.md`,
+  about 4.6% lower; `logs/astra4/cs9/sizes-units.txt`.)*

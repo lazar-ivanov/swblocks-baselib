@@ -205,7 +205,10 @@ they changed.
   ThreadSanitizer does not report every such race: the pair shares one 8-byte word with six other
   flags, ThreadSanitizer keeps four shadow values per word and evicts one when they are full, and one
   report retires the word's reads (LLVM 20.1.0 `tsan_rtl_access.cpp:156-158`, `:186-188`,
-  `:227-230`). So the case makes four requests, and every run reports.
+  `:227-230`). So the case makes four requests, and every run reports. *(2026-09-29: the measurement
+  stands, 50 of 50 and 0 of 50; the explanation is incomplete. The runtime also shares 256 thread
+  slots, and a thread which synchronizes with nothing can lose the comparison. Astra's fourth review's
+  CS-9 found it; see `src/utests/AGENTS.md`, "A ThreadSanitizer red is a measurement".)*
 - **Comments** — `98ad98d` and `3774a97`. The pair is frozen at completion, and reading it after
   completion is safe on any thread.
 - **Folded as found:**
