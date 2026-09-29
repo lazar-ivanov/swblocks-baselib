@@ -1636,6 +1636,19 @@ registers a decoder through the public registry reaches both today (astra's seco
 Peeling several codings stays with the programme, as a prerequisite of it rather than of L7.
 *Corrected 2026-09-27; this said "latent until a content codec ships".*
 
+**Acceptance.** Each slice: focused modules under clang debug in the lane, then clang and gcc release
+plus the whole-suite gate by the orchestrator. S6R.1 and S6R.2 additionally owe the cheap
+demonstrations listed in §7 of the verification record — nothing in either the review or the
+verification was established by running anything, and several findings are RFC-derived rather than
+observed.
+
+**Ordering against L7.** S6R.1 and S6R.2 **must precede L7**. S6R.3 may run in parallel with L7 if
+its decisions are taken first. S6R.4 can land at any point.
+
+*(Moved back here 2026-09-29. These two paragraphs close the S6R slices above; each of Astra's review
+sections below had been inserted ahead of them, which left them under the fifth review's CS-10, whose
+gate they do not describe.)*
+
 **Astra's second review — three change-sets, decided 2026-09-27; the table says where each landed.** Every
 decision's shape, reason, reversal condition and tests are in `issues/astra-second-review-decisions.md`.
 
@@ -2086,15 +2099,6 @@ orchestrator before planning. The decisions they need are put, and recorded, in
 - **Review and gate.** An Opus reviewer does the checkpoint review. The gate is
   `utf_baselib_h2client11` alone, in clang release and gcc debug, since no other module includes the
   file.
-
-**Acceptance.** Each slice: focused modules under clang debug in the lane, then clang and gcc release
-plus the whole-suite gate by the orchestrator. S6R.1 and S6R.2 additionally owe the cheap
-demonstrations listed in §7 of the verification record — nothing in either the review or the
-verification was established by running anything, and several findings are RFC-derived rather than
-observed.
-
-**Ordering against L7.** S6R.1 and S6R.2 **must precede L7**. S6R.3 may run in parallel with L7 if
-its decisions are taken first. S6R.4 can land at any point.
 
 ---
 
