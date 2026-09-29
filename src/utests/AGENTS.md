@@ -30,6 +30,9 @@ until the module was split four ways. See
 
 ### Size policy
 
+MB here means 2^20 bytes, as `utf_objsize.py` and the build's size gate count them; record sizes in
+that unit.
+
 | Tier | Value | Meaning |
 |---|---:|---|
 | Target | **40 MB** | Aim here. An object above it is reported and needs a recorded reason. |
