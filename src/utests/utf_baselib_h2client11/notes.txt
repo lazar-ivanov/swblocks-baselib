@@ -1,0 +1,14 @@
+# each slice appends the recipes for the cases it lands here
+
+# CS-9 of Astra's fourth review - U01, the negotiated value read before it is published
+# (notes/plans/issues/astra4-cs9-negotiated-publication-design.md). The getter case is the red for
+# the contract: a value written and not published is read by neither getter. The reader case is the
+# red for the race, under ThreadSanitizer only - it passes on both sides, and its verdict is the
+# sanitizer's report. The three request cases are characterizations, green on both sides of the fix:
+# Unknown for a cancel during a held handshake, h2 after the handshake, Http11 on the fallback.
+
+--log_level=message --run_test=NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadTests
+--log_level=message --run_test=NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests
+--log_level=message --run_test=NegotiatedPublication_ACancelDuringAHeldHandshakeReportsUnknownTests
+--log_level=message --run_test=NegotiatedPublication_ACancelAfterTheHandshakeReportsH2Tests
+--log_level=message --run_test=NegotiatedPublication_AFallbackToHttp11ReportsHttp11Tests
