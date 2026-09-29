@@ -26,20 +26,20 @@
  * WHY THIS MODULE EXISTS, and it is the size policy. I2
  * (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md) is shown on the real
  * consumers as well as on utf_baselib_tasks3's probes, and the HTTP/2 driver over TLS is the heaviest
- * of them. With the HTTP/1.1 driver and SimpleHttpTask in one module the object was 45.0 MB a64 clang
+ * of them. With the HTTP/1.1 driver and SimpleHttpTask in one module the object was 42.9 MB a64 clang
  * debug, over the 40 MB target; the one module which already carries this driver over TLS,
- * utf_baselib_h2client3, measured 41.7 MB at the same toolchain and variant. Alone, the HTTP/2 case
- * is 37.5 MB; the other two live in utf_baselib_httpclient13, at 36.9 MB
+ * utf_baselib_h2client3, measured 39.8 MB at the same toolchain and variant. Alone, the HTTP/2 case
+ * is 35.7 MB; the other two live in utf_baselib_httpclient13, at 35.2 MB
  *
  * WHAT THIS MODULE PAYS FOR. The HTTP/2 driver over the stranded TLS policy, and the connection
  * establisher under it. The TLS peer is utests/baselib/TlsEndingPeer.h, and the run of a consumer to
  * the end of its teardown is utests/baselib/TlsTeardownTestUtils.h, both shared with
  * utf_baselib_httpclient13. Not the request task, the session or the pool
  *
- * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 37.5 MB clang debug (a64) at
- * d13859c, which by the ratio win-x86 debug has shown over a64 clang debug (1.11 to 1.17,
+ * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 35.7 MB clang debug (a64) at
+ * d13859c, which by the ratio win-x86 debug has shown over a64 clang debug (1.13 to 1.17,
  * notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) is
- * about 42 to 44 MB on x86 - inferred, not measured; the Windows handoff measures it. The weight is
+ * about 40 to 42 MB on x86 - inferred, not measured; the Windows handoff measures it. The weight is
  * the HTTP/2 driver over the stranded TLS policy and the connection task under it, which this
  * module's one case alone costs, so a split cannot lower it. This module takes no further cases
  *
