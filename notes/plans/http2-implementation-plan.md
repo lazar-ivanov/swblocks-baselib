@@ -2056,6 +2056,37 @@ orchestrator before planning. The decisions they need are put, and recorded, in
 - It folds what it finds, and asks its decisions during the run.
 - It is monitored from launch (`AGENTS.md` v2.16).
 
+**Astra's fifth review, 2026-09-29 — one change-set, planned 2026-09-29.** The review is
+`http2-l0-l6-fifth-review-2026-09-29.md`, of `c454aac`.
+- It confirms U01 fixed, and establishes no production regression from CS-9.
+- It finds one P3, **V01**, in CS-9's own test. `runRide( )` reads the probe's submitted handle even
+  when the wait for the submit has timed out (`TestNegotiatedPublication.h:1122-1123`, from `65cf086`).
+- **The orchestrator checked V01 at the source.**
+  - `RidingDriverProbe::m_handle` is a plain `stream_handle_t`. `submit( )` writes it on the request's
+    thread just before it signals (`:571-576`), and `submittedHandle( )` reads it with no lock.
+  - After a timed-out wait, nothing orders that read with the write. That is a data race in the test,
+    on the very path which reports that the submit never came. No production code is involved.
+- **No decision is needed.** The correction has one shape, Astra's: read the handle only when the wait
+  returned true. Otherwise `RideResult` keeps its invalid default, which the case's check already
+  reports as "never submitted". Synchronizing the storage instead would serve a reader which wants the
+  handle before the submit is observed, and there is none.
+
+| Change-set | Finding | Files | Lane |
+|---|---|---|---|
+| **CS-10** | V01 — a timed-out wait followed by an unsynchronized read | `utf_baselib_h2client11/TestNegotiatedPublication.h`: `runRide( )` reads the handle only after a successful wait, and the member's comment says so | lane 1, branch `astra5-cs10` |
+
+**How it runs.** One lane, under the same workflow, with no design note.
+- **The same shape elsewhere.** The lane searches CS-9's module, and the shared test helpers it uses,
+  for a timed wait whose result is stored and then state read regardless of it. It folds what it
+  finds.
+- **Red and green.** The lane makes the wait fail in an uncommitted diagnostic. The unfixed helper
+  reads the handle after the failed wait, and the fixed one does not. That is a deterministic control,
+  which `src/utests/AGENTS.md` prefers. The successful path must keep its behaviour, shown by 50 runs
+  of the module.
+- **Review and gate.** An Opus reviewer does the checkpoint review. The gate is
+  `utf_baselib_h2client11` alone, in clang release and gcc debug, since no other module includes the
+  file.
+
 **Acceptance.** Each slice: focused modules under clang debug in the lane, then clang and gcc release
 plus the whole-suite gate by the orchestrator. S6R.1 and S6R.2 additionally owe the cheap
 demonstrations listed in §7 of the verification record — nothing in either the review or the
