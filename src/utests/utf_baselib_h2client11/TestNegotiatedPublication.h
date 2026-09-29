@@ -211,6 +211,15 @@ namespace utest
             {
                 base_type::m_negotiated = BL_PARAM_FWD( negotiated );
             }
+
+            /**
+             * @brief Publishes a value, through the protected helper continueAfterConnected( ) uses
+             */
+
+            void publish( SAA_in bl::httpclient::NegotiatedProtocol negotiated )
+            {
+                base_type::publishNegotiated( BL_PARAM_FWD( negotiated ) );
+            }
         };
 
         typedef bl::om::ObjectImpl< UnpublishedTaskBase >                       UnpublishedTaskBaseImpl;
@@ -252,6 +261,15 @@ namespace utest
             void writeUnpublished( SAA_in bl::httpclient::NegotiatedProtocol negotiated )
             {
                 establisher_type::m_negotiated = BL_PARAM_FWD( negotiated );
+            }
+
+            /**
+             * @brief Publishes a value, through the protected helper continueAfterConnected( ) uses
+             */
+
+            void publish( SAA_in bl::httpclient::NegotiatedProtocol negotiated )
+            {
+                establisher_type::publishNegotiated( BL_PARAM_FWD( negotiated ) );
             }
         };
 
@@ -1209,11 +1227,17 @@ namespace utest
 } // utest
 
 /**
- * @brief RED FOR THE CONTRACT - a value written and not published is read by neither getter
+ * @brief RED FOR THE CONTRACT - a value written and not published is read by neither getter; once
+ * published, it is what a reader on another thread gets
  *
- * The establishment base's negotiated( ), and the HTTP/2 driver's through ClientConnection. Each half is
- * checked without stopping the case, so a run shows both. One thread, no timing: today both return what
- * was written
+ * The establishment base's negotiated( ), and the HTTP/2 driver's through ClientConnection. Each check
+ * is made without stopping the case, so a run shows every one. One thread, no timing, until the value
+ * is published: before the fix both getters returned what was written
+ *
+ * THE PUBLISH HALF is read from a thread started after the publication, whose start orders the read
+ * after it. On the driver it is also the one control which separates (a'') from the withdrawn (a'):
+ * the driver never started, so it still reads Connecting, and the settled value must be read anyway
+ * (notes/plans/issues/astra4-cs9-negotiated-publication-design.md, section 7.1)
  */
 
 UTF_AUTO_TEST_CASE( NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadTests )
@@ -1248,6 +1272,46 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadT
         HttpProtocol::Unknown == seenByTheDriver.protocol() && ! seenByTheDriver.hasAlpn(),
         "the HTTP/2 driver's negotiated( ), read through ClientConnection, returned a value which was "
             "written and never published: " + describe( seenByTheDriver )
+        );
+
+    taskBase -> publish( NegotiatedProtocol::fromAlpn( "h2" ) );
+    driver -> publish( NegotiatedProtocol::fromAlpn( "h2" ) );
+
+    const auto stateAtThePublication = connection -> state();
+
+    NegotiatedProtocol publishedByTheBase;
+    NegotiatedProtocol publishedByTheDriver;
+
+    {
+        os::thread reader(
+            [ & ]() -> void
+            {
+                publishedByTheBase = taskBase -> negotiated();
+                publishedByTheDriver = connection -> negotiated();
+            }
+            );
+
+        os::safeThreadJoin( reader );
+    }
+
+    chkOrReport(
+        ConnectionState::Connecting == stateAtThePublication,
+        "the unstarted driver did not read Connecting, so this is not the control it is meant to be: " +
+            stateName( stateAtThePublication )
+        );
+
+    chkOrReport(
+        HttpProtocol::Http2 == publishedByTheBase.protocol() &&
+            std::string( "h2" ) == publishedByTheBase.alpn(),
+        "the establishment base's negotiated( ) did not return the value it published: " +
+            describe( publishedByTheBase )
+        );
+
+    chkOrReport(
+        HttpProtocol::Http2 == publishedByTheDriver.protocol() &&
+            std::string( "h2" ) == publishedByTheDriver.alpn(),
+        "the HTTP/2 driver's negotiated( ), read through ClientConnection while it reads Connecting, did "
+            "not return the value it published: " + describe( publishedByTheDriver )
         );
 }
 
