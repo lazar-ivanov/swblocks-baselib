@@ -1862,7 +1862,15 @@ orchestrator before planning. The decisions they need are put, and recorded, in
     - **(b)** have the connection publish a separate immutable snapshot, which is a redesign of the
       getter;
     - **(c)** wait for negotiation before completing a failed request. Astra and the plan reject
-      this: it delays cancellation for metadata which does not exist yet.
+      this: it delays cancellation for metadata which does not exist yet;
+    - **(a″)**, added 2026-09-29: the connection publishes the value itself, behind an atomic flag
+      set after its single write, and every getter reads the flag first.
+  - **Taken, 2026-09-29: (a″).** The maintainer asked first what a future caller of the getter would
+    expect. The interface promises "Unknown with no identifier until ALPN has resolved", and RFC 9113
+    settles the protocol at the end of the handshake. `Ready` is the driver's own later state. So
+    (a′) would have reported `Unknown` after the protocol was settled, and (a) alone leaves the getter
+    unsafe behind a rule the interface never states. The decision record has the reasoning and its
+    sources. What follows up to the tests is the recommendation as it was made, before the decision.
   - **The recommendation: (a) and (a′) together.** The one-off review recommended (a) alone, with
     (a′) as its reversal "if a third reader appears". The orchestrator counts this as the rule's
     second breach, after H04's, and `AGENTS.md` makes a repeat a decision to take structurally. What
@@ -1892,7 +1900,73 @@ orchestrator before planning. The decisions they need are put, and recorded, in
       `Unknown` and an empty ALPN, including through the session's response. No session decision,
       cookie, decoder or redirect reads the value, and no existing test asserts a protocol on a
       failed response.
-  - **The tests:**
+  - **What (a″) does, as decided.**
+    - `continueAfterConnected( )` writes `m_negotiated` once, as today, and then sets an atomic
+      "published" flag, before its trace and before `onProtocolNegotiated( )`. Both getters read the
+      flag first: `ClientConnectionTaskBaseT::negotiated( )`, and `Http2ConnectionTaskT::negotiated( )`,
+      which delegates to it. Before the flag is set a getter returns a default `NegotiatedProtocol`,
+      `Unknown` with no identifier. After it, the getter returns the member, which is never written
+      again.
+    - Every reader, present and future, is then safe from any thread at any time, and reads the
+      protocol from the moment the handshake settles it. Neither request-task reader changes, and
+      no reader needs the state-first rule to be safe.
+    - A reader which observes any state other than `Connecting` still reads the final value. The flag
+      is set before `Ready` is published, in the same handler, and the terminal is ordered as today.
+    - The strand's own reads follow the write on the strand, and keep reading the member directly:
+      `onProtocolNegotiated( )`'s fallback test (`Http2ConnectionTask.h:2755`), the factory's argument
+      (`ClientConnectionTaskBase.h:630`) and the trace (`:669`).
+    - No test writes the base's member. The tests which read the base's getter read it after their
+      task has completed.
+  - **The design note comes first** (workflow §4.1), and an Opus reviewer agrees it before any code.
+    It settles:
+    - where the flag lives, its type and its memory order, in the file's idiom (`std::atomic`, as
+      `m_connectionState` is);
+    - how the default is stored. A function-local static relies on thread-safe local statics, so the
+      note shows that this holds on every toolchain the library builds with, or uses a member;
+    - that the value is written at most once, re-verified at the source. The one-off review checked
+      this premise; the mechanism now rests on it. An assertion guards it.
+    - **If the value can be written twice, the shape does not hold**, and the lane stops. A decided
+      shape that no longer holds goes back to the maintainer.
+  - **The comments, wherever one states the rule this retires or the premise U01 broke.** The lane
+    searches for the old rule's wording rather than trusting this list:
+    - the HTTP/2 driver's class comment, "WHAT negotiated( ) RESTS ON" (`Http2ConnectionTask.h:196-208`),
+      the note at `:2801-2806`, and the getter's documentation at `:3102-3107`;
+    - `ClientConnectionTaskBase.h:364-369`, and the base getter's documentation at `:751-756`;
+    - the pool's H04b comment (`ConnectionPool.h:1121-1128`). Testing `isReady` first is no longer
+      what makes the read safe. It stays, because dropping it would change which connections the pool
+      counts. The lane confirms that reason at the source before writing it;
+    - `completeResponse( )`'s "read at the END … when it is settled" (`HttpClientRequestTask.h:1898-1901`).
+      A request which fails before its connection's handshake completes reads `Unknown`;
+    - the `ClientConnection` interface (`ClientConnection.h:357-371`), which states the requirement
+      on every implementation: safe from any thread, and `Unknown` with no identifier until the
+      protocol is settled.
+  - **Unchanged:** preface riding, prompt cancellation, T01's freeze, late cleanup, and the pool's
+    order of tests.
+  - **What a caller sees, with (a″):** a request which failed before its connection's handshake
+    completed reports `Unknown` and an empty ALPN. One which failed after the handshake reports what
+    was negotiated, even before `Ready`.
+  - **The tests planned for (a) and (a′) are replaced by (a″)'s, below;** their text is in
+    `9094c57`. (a″)'s tests:
+    - **A deterministic getter case.**
+      - Two test types write the member without publishing it: one derived from the establishment
+        base, and one from the HTTP/2 driver.
+      - The getter must still return `Unknown` and empty. On today's code it returns what was
+        written: the red.
+      - Once the value is published, the getter returns it, read from another thread too.
+    - **The composed case: U01's route itself**, on the real driver and a real TLS peer.
+      - A request rides a driver whose handshake is held, by a listener which never accepts, as
+        `utf_baselib_h2client10` holds one. The request is cancelled. It reports `Unknown` and
+        empty, with its original failure intact.
+      - A request on a driver which completed its handshake reports `h2`.
+    - **A ThreadSanitizer pair, on the real write.**
+      - A reader thread which takes no lock reads the real driver's getter through
+        `ClientConnection`, while the driver completes its handshake against a real TLS peer.
+      - Today: a reported race between that read and the write at `ClientConnectionTaskBase.h:656`.
+        After the fix: none.
+      - It runs in a tree with no other build, with its positive control (`utf_baselib_basictask`).
+    - **The controls:** the fallback reports `Http11`, and the HTTP/1.1 driver's constant is
+      unchanged.
+  - *The tests as planned for (a) and (a′), superseded 2026-09-29:*
     - **A deterministic contract case, for (a).**
       - A probe connection reports `Connecting` and counts calls to its `negotiated( )`.
       - The request completes by a cancel, by its total or headers deadline, and by a `submit( )`
@@ -1919,8 +1993,15 @@ orchestrator before planning. The decisions they need are put, and recorded, in
         needed four.
       - There is a reported race before the fix, and none after, in a tree with no other build and
         with its positive control.
-  - **The module.** `utf_baselib_httpclient` is at the x86 target: 35.1 MB (2^20) at a64, about
-    39.6-41 MB on x86, inferred. So the cases go to the next free sibling, `utf_baselib_httpclient14`.
+  - **The module, for (a″).** The cases need the real driver, and its probe and TLS peer are already
+    shared (`Http2DriverTlsProbe.h`, `Http2TlsTestServer.h`).
+    - They go to the next free sibling, `utf_baselib_h2client11`, unless a module with headroom
+      suits them better. The lane measures and says which.
+    - `utf_baselib_httpclient14` stays reserved for this lane. The probe move planned for (a) is not
+      needed.
+  - *The module as planned for (a), superseded 2026-09-29:* `utf_baselib_httpclient` is at the x86
+    target: 35.1 MB (2^20) at a64, about 39.6-41 MB on x86, inferred. So the cases go to the next
+    free sibling, `utf_baselib_httpclient14`.
     - `ProbeConnectionT` and `ProbePoolT`, with the `requesttask` using-declarations they depend on,
       move byte for byte from `TestHttpClientRequestTask.h` into the shared include tree, as
       `794f281` moved CS-6's `Http2DriverProbe`. `utf_baselib_httpclient` reaches them through
@@ -1931,7 +2012,15 @@ orchestrator before planning. The decisions they need are put, and recorded, in
       ThreadSanitizer pair.
     - The driver case for (a′) goes wherever an unstarted HTTP/2 driver can be built. The lane
       measures and says where.
-  - **Reach and gate.** It is not core baselib.
+  - **Reach and gate, for (a″).** It is not core baselib.
+    - `ClientConnectionTaskBase.h` changes logic. The compiler's dependency files name 21 modules
+      (`http2-l0-state/logs/astra4/deps-*.txt`). The dependents of `Http2ConnectionTask.h` (15),
+      `HttpClientRequestTask.h` (7) and `ConnectionPool.h` (8) all fall inside them.
+    - The gate is clang release and gcc debug, over those 21 plus the new module.
+    - `ClientConnection.h` is compiled by 25 modules, four of them outside the 21: `h2profiles`,
+      `http3`, `httpclient13` and `httpclient2`. Its comment edit is kept line for line, and shown
+      preprocess-identical. If it cannot be, the gate takes those four as well.
+  - *Reach and gate as planned for (a) and (a′), superseded 2026-09-29:*
     - (a) changes the logic of `HttpClientRequestTask.h`; its dependents are 7 modules plus `…14`.
     - (a′) changes `Http2ConnectionTask.h`; its dependents are 15 modules.
     - The gate is clang release and gcc debug over the union of both, as the compiler's `-MM` finds
@@ -1939,15 +2028,16 @@ orchestrator before planning. The decisions they need are put, and recorded, in
     - The comment edits to the shared headers are line for line and preprocess-identical, so they
       widen nothing.
   - **Windows:** the deterministic cases run there, and ThreadSanitizer does not. It is a D-section in
-    `windows-matrix-handoff.md`, which also records `…14`'s a64 size and its x86 estimate, as C2 does
-    for `utf_baselib_httpclient`.
+    `windows-matrix-handoff.md`. It also records the new module's a64 size and its x86 estimate, as
+    C2 does for `utf_baselib_httpclient`.
 
 | Change-set | Finding | Files | Lane |
 |---|---|---|---|
-| **CS-9** | U01 — the negotiated value read before it is published | `HttpClientRequestTask.h`; `Http2ConnectionTask.h` (with (a′)); comments, line for line, in `ClientConnection.h` and `ClientConnectionTaskBase.h`; `utf_baselib_httpclient14` (new), with `ProbeConnectionT` and `ProbePoolT` moved verbatim to `src/utests/include` and a derived probe in the new module; a D-section in `issues/windows-matrix-handoff.md` | lane 1, branch `astra4-cs9` |
+| **CS-9** | U01 — the negotiated value read before it is published | (a″): `ClientConnectionTaskBase.h` and `Http2ConnectionTask.h`; comments in `ConnectionPool.h` and `HttpClientRequestTask.h`, and line for line in `ClientConnection.h`; the design note; `utf_baselib_h2client11` (new) or a module with headroom; a D-section in `issues/windows-matrix-handoff.md` | lane 1, branch `astra4-cs9` |
 
 **How it runs.** One lane, under the workflow `parallel-implementation-workflow.md`.
-- It starts once the maintainer has chosen D1's shape.
+- It started once the maintainer had chosen D1's shape: (a″), taken 2026-09-29. The design note
+  comes first.
 - An Opus reviewer does the checkpoint review, and the orchestrator merges, gates and records it. The
   records include `AGENTS.md` v2.17's reconciliation sweep.
 - It folds what it finds, and asks its decisions during the run.

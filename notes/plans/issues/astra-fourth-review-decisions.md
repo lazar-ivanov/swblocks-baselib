@@ -1,7 +1,7 @@
 # Astra's fourth review — the decision, and how its change-set lands
 
-**Date:** 2026-09-29. **Status:** planned. D1 is put to the maintainer, and CS-9 is not coded before it
-is taken.
+**Date:** 2026-09-29. **Status:** D1 taken by the maintainer on 2026-09-29: shape (a″), in which the
+connection publishes the value itself. CS-9 is in lane 1, design note first.
 
 **The review:** [`http2-l0-l6-fourth-review-2026-09-28.md`](../http2-l0-l6-fourth-review-2026-09-28.md),
 of `045e889`.
@@ -82,6 +82,21 @@ So any state other than `Connecting` implies a final value.
       - It is a behavioural change to a driver method, and the driver's header gates 15 modules
         where (a) gates 8. Its deterministic test is cheap: an unstarted driver's getter returns the
         default, not its own member.
+    - **(a″) The connection publishes the value itself, and the getter reads the publication.** Put to
+      the maintainer on 2026-09-29, when they asked what a future caller of the getter would expect.
+      - `continueAfterConnected( )` writes the value once, and then sets an atomic flag. Both getters,
+        the establishment base's and the HTTP/2 driver's, read the flag first. Before it is set they
+        return a default `NegotiatedProtocol`, `Unknown` with no identifier. After it they return the
+        value, which is never written again.
+      - The getter is then safe from any thread at any time. It reports the protocol from the moment
+        the handshake settles it, which is what the interface already promises: "Unknown with no
+        identifier until ALPN has resolved".
+      - Neither request-task reader needs a rule. A request which failed before the handshake
+        completed reports `Unknown`. One which failed after it reports what was negotiated — `h2`, or
+        `http/1.1` on the fallback — even before `Ready`.
+      - **Reach:** one atomic store in every client connection's establishment, and one atomic load
+        in every read of an HTTP/2 connection's value. `ClientConnectionTaskBase.h` is compiled by 21
+        modules, and the gate covers them.
     - **(b) A separately published immutable snapshot.** The connection publishes its negotiated value
       through a synchronized or immutable holder, and the getter returns that. It is a redesign of the
       getter on the interface and in both drivers, for readers which need provisional metadata during
@@ -101,12 +116,38 @@ So any state other than `Connecting` implies a final value.
   - **Reverses to (a) alone** if the maintainer would rather not change a driver method or widen the
     gate for a rule the interface now documents. **To (b)** only if some caller must read safe
     provisional metadata during establishment, which none does.
+- **Taken, 2026-09-29: (a″).** Before deciding, the maintainer asked three things: what a future
+  caller of the getter would expect, whether "not until `Ready`" is part of its contract, and what the
+  HTTP/2 standard says. The answers, checked at the source:
+  - **The contract.** The interface promises "Unknown with no identifier until ALPN has resolved"
+    (`ClientConnection.h:362`), and restricts no caller. The rule "never read while `Connecting`"
+    appears only in the HTTP/2 driver's class comment. So the driver did not honour the interface
+    as written.
+  - **The standard.**
+    - RFC 9113 §3.2 selects HTTP/2 over TLS by ALPN, in the TLS handshake, and RFC 7301 §3.2 makes
+      the selected protocol definitive for the connection. For cleartext, §3.3 settles it by prior
+      knowledge.
+    - §3.4 lets the client send immediately after its own preface.
+    - So the protocol is known from the end of the handshake. `Ready` is the driver's own state,
+      published after it has built its session and issued its preface, and no RFC knows it.
+    - The text is saved verbatim in the evidence directory, `logs/astra4/rfc/`.
+  - **So (a′) was withdrawn.** It would have reported `Unknown` between the handshake and `Ready`,
+    after the protocol was settled. That is safe, but wrong against both the interface and the
+    standard, and wrong in the window where a reader checking the negotiation would look first.
+  - **And (a) alone was not enough.** It leaves the getter unsafe during establishment, behind a rule
+    the interface never states — the rule two readers have now missed.
+  - **(a″) is the contract-preserving form of (a′).** Its mechanism has real content, so the lane
+    writes a design note first, and an Opus reviewer agrees it before it is coded (workflow §4.1).
+    The note re-verifies the single write, and settles where the flag lives and how the default is
+    stored.
+  - **It reverses** if the design note finds the value can be written more than once. A single
+    publication cannot cover a second write, and the decision goes back to the maintainer.
 
 ## 2. The change-set
 
 | Change-set | Finding | Lane | Starts |
 |---|---|---|---|
-| **CS-9** | U01 | lane 1, `astra4-cs9` | once D1 is taken |
+| **CS-9** | U01 | lane 1, `astra4-cs9` | D1 taken 2026-09-29; the design note first |
 
 The plan gives its files, tests and gate.
 
