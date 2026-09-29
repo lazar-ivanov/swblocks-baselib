@@ -533,7 +533,8 @@ namespace utest
             OneShotSignal                                                       m_handshakeBegun;
 
             /*
-             * Written before m_submitted is signalled, and read by the case after waiting for it
+             * Written before m_submitted is signalled, and read by the case only after a wait which
+             * observed the signal
              */
 
             bl::httpclient::stream_handle_t                                     m_handle;
@@ -1039,9 +1040,9 @@ namespace utest
         /**
          * @brief Runs one request over the real driver, taken to the moment 'ride' names, and ends it
          *
-         * Every wait is bounded and every one is for the event its reading is about: the submit, the
-         * handshake begun, the opening write over, the request's completion, the release, the driver's
-         * stop. Nothing sleeps
+         * Every wait is for the event its reading is about: the submit, the handshake begun, the opening
+         * write over, the request's completion, the release, the driver's stop. The two queue waits, for
+         * the request and for the driver, take no bound; the rest are bounded. Nothing sleeps
          */
 
         inline auto runRide( SAA_in const Ride ride ) -> RideResult
@@ -1120,7 +1121,18 @@ namespace utest
                     eq -> push_back( requestTask );
 
                     result.isSubmitted = driver -> waitForSubmit();
-                    result.handle = driver -> submittedHandle();
+
+                    /*
+                     * THE HANDLE IS READ ONLY AFTER A WAIT WHICH OBSERVED THE SUBMIT. Nothing else
+                     * orders the read after the probe's write, which a failed wait leaves unordered
+                     * whether the request has made it yet or not. The handle then keeps its invalid
+                     * default, and chkRodeAndReleasedOnce( ) reports the failed wait as never submitted
+                     */
+
+                    if( result.isSubmitted )
+                    {
+                        result.handle = driver -> submittedHandle();
+                    }
 
                     eq -> push_back( driverTask );
 
