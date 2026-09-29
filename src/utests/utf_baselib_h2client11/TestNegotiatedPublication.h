@@ -533,7 +533,8 @@ namespace utest
             OneShotSignal                                                       m_handshakeBegun;
 
             /*
-             * Written before m_submitted is signalled, and read by the case after waiting for it
+             * Written before m_submitted is signalled, and read by the case only after a wait which
+             * observed the signal
              */
 
             bl::httpclient::stream_handle_t                                     m_handle;
@@ -1120,6 +1121,13 @@ namespace utest
                     eq -> push_back( requestTask );
 
                     result.isSubmitted = driver -> waitForSubmit();
+
+                    /*
+                     * THE HANDLE IS READ ONLY AFTER A WAIT WHICH OBSERVED THE SUBMIT. Nothing else
+                     * orders the read after the probe's write: after a failed wait the request may be
+                     * making that write, or have yet to make it. The handle then keeps its invalid
+                     * default, which chkRodeAndReleasedOnce( ) reports as never submitted
+                     */
 
                     if( result.isSubmitted )
                     {
