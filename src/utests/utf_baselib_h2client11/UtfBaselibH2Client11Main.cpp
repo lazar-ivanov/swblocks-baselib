@@ -36,8 +36,8 @@
  * utests/baselib/Http2DriverTlsProbe.h and the TLS peer utests/baselib/TlsEndingPeer.h. Not the pool,
  * which a test pool of one connection stands in for, and not the session
  *
- * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 37.9 MB clang debug (a64) with its
- * five cases, when they landed. By the ratio win-x86 debug has shown over a64 clang debug (1.11 to
+ * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 38.0 MB clang debug (a64) with its
+ * five cases, when CS-9 closed. By the ratio win-x86 debug has shown over a64 clang debug (1.11 to
  * 1.17, notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) that
  * is about 42 to 44 MB on x86 - inferred, not measured; the Windows handoff measures it. The weight is
  * the HTTP/2 driver over the stranded TLS policy: utf_baselib_h2client10 costs 37.6 MB with it and no
