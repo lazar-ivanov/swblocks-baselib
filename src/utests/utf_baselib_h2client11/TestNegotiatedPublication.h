@@ -288,7 +288,7 @@ namespace utest
          *
          *   - read in a loop while the handshake runs, the race reported in 1 run of 54;
          *   - read once, let go when the driver's opening write ended - a round trip after the write -
-         *     it reported in 99 of 100;
+         *     it reported in 101 of 102;
          *   - so the read now follows the write by as little as the case can make it, and the waiting
          *     thread keeps taking a slot of its own. The runs this was measured by are in
          *     logs/astra4/cs9/
