@@ -535,8 +535,15 @@ orchestrator's, recorded when CS-9 lands):
       same arrangement as those reds;
     - the driver's cancel ending a held TLS handshake on IOCP, which is B4 to B6.
 
-    It asserts the request's own cancel and its `Unknown` value, which are platform-independent, and
-    waits up to 30 s for the driver to stop. If it fails on "the driver never stopped", read B4 first.
+    It asserts the request's own cancel and its `Unknown` value, which are platform-independent. Its
+    slot comes back only from the driver's terminal, so if the driver's cancel does not end the held
+    handshake, neither the release nor the stop arrives: the case waits 30 s for each and then waits
+    without a bound for the driver task, which only the driver's own 60 s connect deadline, re-issuing
+    the cancel (CS-6's (a2)), can end. It then fails first on "the request did not give its one slot
+    back exactly once", with "released no" and "driver stopped no" in its description - read B4
+    first. If it hangs instead, the re-issued cancel did not end the handshake either. Every case here
+    which cancels its driver ends in such a wait, so a hang in any of them points the same way: B4
+    before the handshake, B7 after it.
   - `NegotiatedPublication_ACancelAfterTheHandshakeReportsH2Tests` - rests on the driver's
     application-phase cancel, which B7 characterizes in `utf_baselib_h2client10`.
   - `NegotiatedPublication_AFallbackToHttp11ReportsHttp11Tests` - the http/1.1 fallback, with a stub
