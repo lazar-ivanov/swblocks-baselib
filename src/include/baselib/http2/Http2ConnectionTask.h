@@ -3108,7 +3108,7 @@ namespace bl
 
             virtual auto negotiated() const NOEXCEPT -> const httpclient::NegotiatedProtocol& OVERRIDE
             {
-                return base_type::m_negotiated;
+                return base_type::negotiated();
             }
 
             /**
