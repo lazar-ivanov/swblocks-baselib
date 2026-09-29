@@ -3731,7 +3731,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 857,
+   "line": 1204,
    "module": "utf_baselib_httpclient",
    "name": "ClientSession_AConnectionLossIsReplayedUnderTheKnobTests",
    "namespaces": []
@@ -3827,7 +3827,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 879,
+   "line": 1226,
    "module": "utf_baselib_httpclient",
    "name": "ClientSession_ATimedOutRequestIsNotReplayedTests",
    "namespaces": []
@@ -3875,7 +3875,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 837,
+   "line": 1184,
    "module": "utf_baselib_httpclient",
    "name": "ClientSession_AnOverflowedRequestIsNotReplayedTests",
    "namespaces": []
@@ -7427,13 +7427,37 @@
    "namespaces": []
   },
   {
+   "body_sha": "f21b558f0593a0540eb19cecd4889dce",
+   "doc_sha": "74cf986be3be39941a65e9fab2f244ae",
+   "file": "utf_baselib_httpclient/TestHttpClientRequestTaskAfterTheFailure.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1249,
+   "module": "utf_baselib_httpclient",
+   "name": "HttpClientRequestTask_ACloseAfterTheFailureChangesNoStatusTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "7bebddb6bac02a67aa85a0b268dc1c7e",
+   "doc_sha": "8cb338e2884732cc8946b5ab8ba8d4c9",
+   "file": "utf_baselib_httpclient/TestHttpClientRequestTaskAfterTheFailure.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1274,
+   "module": "utf_baselib_httpclient",
+   "name": "HttpClientRequestTask_ACloseInTheFailuresBatchStillSetsTheStatusTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "404178d106d9716be979014d9ca6f170",
    "doc_sha": "da69eeb94f10108977b0c5d5888bd2e7",
    "file": "utf_baselib_httpclient/TestHttpClientRequestTaskAfterTheFailure.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 756,
+   "line": 1103,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_AnUploadPullAfterTheFailureIsNotAnsweredTests",
    "namespaces": []
@@ -7505,7 +7529,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 733,
+   "line": 1080,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_HeadersAndTrailersAfterTheFailureChangeNothingTests",
    "namespaces": []
@@ -19258,7 +19282,7 @@
    "line": 75,
    "module": "utf_baselib_httpclient",
    "ns": "utest",
-   "sha": "2d86b726f283624b17eb2d27c23782d6"
+   "sha": "7786e3618e0b96eedb724259f9434290"
   },
   {
    "conditional_only": false,
@@ -24583,6 +24607,8 @@
     "Http1Codec_SmugglingDefencesTests",
     "Http1Codec_StatusLineHeadersAndBodyTests",
     "HttpClientRequestTask_ABlockAfterTheFailureIsNotOfferedTests",
+    "HttpClientRequestTask_ACloseAfterTheFailureChangesNoStatusTests",
+    "HttpClientRequestTask_ACloseInTheFailuresBatchStillSetsTheStatusTests",
     "HttpClientRequestTask_AnUploadPullAfterTheFailureIsNotAnsweredTests",
     "HttpClientRequestTask_BodySourceWhichThrowsFailsTheRequestTests",
     "HttpClientRequestTask_BouncedRequestNamesTheConnectionFailureTests",
@@ -27755,7 +27781,7 @@
    "line": 73,
    "module": "utf_baselib_httpclient",
    "name": "utest",
-   "sha": "06948b081a1f4145b8bf4a049780c0b2"
+   "sha": "265d632ba8040c653c654561750c59b0"
   },
   {
    "file": "utf_baselib_httpclient/TestHttpClientRequestTaskOutstandingCap.h",
