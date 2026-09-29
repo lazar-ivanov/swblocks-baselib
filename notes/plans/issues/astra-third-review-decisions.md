@@ -117,6 +117,25 @@ review": change-sets CS-7 (T01) and CS-8 (T02).
 - **Decided by the maintainer, 2026-09-28: the clause on `AGENTS.md`'s sweep bullet.** It is
   `AGENTS.md` v2.17. The workflow's §4.6 and §6 refer to it.
 
+### D3 — the size policy names its unit (from CS-7's checkpoint review, O1)
+
+- **What it is.** `src/utests/AGENTS.md` sets a 40 MB target and a 75 MB ceiling without naming the
+  unit.
+  - The tools count 2^20 bytes: `utf_objsize.py:80`, and the build's size gate.
+  - Some records quote 10^6 bytes: the Windows handoff's a64 columns (A4, B14) and
+    `utf_baselib_httpclient13`'s `Main.cpp`.
+  - It was noticed twice: CS-4's review (F2, "in the house's unit") and CS-7's (F3, O1).
+- **What happens if it is not done.** The records keep mixing units. The handoff's x86 estimates
+  run about 4.9% high, and a module can read under the target in one record and over it in another.
+- **Risk, complexity, blast radius.** One sentence in a rules file. Enforcement does not change,
+  because the tools already count 2^20.
+- **The undecided part.** Whether the rules file names the unit, or each record states its own.
+- **Recommendation:** one sentence in the size policy. It reverses to per-record units if the rules
+  file is to stay untouched.
+- **Decided by the maintainer, 2026-09-28, as recommended:** *"MB here means 2^20 bytes, as
+  `utf_objsize.py` and the build's size gate count them; record sizes in that unit."* It lands in
+  CS-7, with the corrected tables.
+
 ### T02 itself needs no decision
 
 T02 is a text correction to decisions already taken, so it is folded (`AGENTS.md`): CS-8 corrects
