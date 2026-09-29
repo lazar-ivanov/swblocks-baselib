@@ -67,8 +67,8 @@
  *     input. An unstarted establishment base, and an unstarted HTTP/2 driver, each have their value
  *     written and not published. Today both getters return what was written.
  *   - NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests - the race, under
- *     ThreadSanitizer. A thread which takes no lock reads the real driver's negotiated( ) while it
- *     completes a real handshake. Today the read which returns the settled value races the write
+ *     ThreadSanitizer. A thread ordered after nothing the strand did reads the real driver's
+ *     negotiated( ) once a real handshake has settled it. Today that read races the write
  *     (ClientConnectionTaskBase.h, continueAfterConnected( )). The case itself passes on both sides; its
  *     verdict is the sanitizer's report, read from the run's own output.
  *
@@ -261,15 +261,30 @@ namespace utest
          */
 
         /**
-         * @brief A thread which reads a connection's negotiated( ) until it reads a settled protocol
+         * @brief A thread which reads a connection's negotiated( ) once, after the handshake has
+         * settled it, with nothing ordering the read after the write
          *
-         * IT TAKES NO LOCK AND SYNCHRONIZES WITH NOTHING THE STRAND DOES, which is the whole point. It
-         * reads once and then signals that it has started - its last synchronization with anybody - and
-         * the case schedules the driver only after that signal. From there on it reads protocol( ) in a
-         * loop until the protocol is not Unknown, records it and signals again. The loop's only other
-         * access is a load of the abandon flag, which is stored only if that second signal never comes,
-         * or by the destructor once the loop is over; on a run which passes, every load reads the
-         * initial value and synchronizes with nothing
+         * THE READ IS AFTER THE WRITE IN TIME AND IN NO HAPPENS-BEFORE. The thread is created before
+         * the driver is scheduled, and from then until its read it acquires nothing the strand, or
+         * anything ordered after the strand's write, has released:
+         *
+         *   - it is let go by go( ), a RELAXED store, which the case makes only once it has seen the
+         *     driver's opening write end - after the write, in time. It waits for it by spinning on a
+         *     relaxed load. A relaxed store and load are not synchronization, to the C++ model or to
+         *     ThreadSanitizer, and that is the only reason they are relaxed;
+         *   - it then locks and unlocks a mutex which no other thread ever takes. That orders it after
+         *     nothing but its own past. What it is for is ThreadSanitizer's: a thread which has
+         *     synchronized with nothing for a while can have its slot taken over by another, whose
+         *     identity it would then share, and the lock makes it take a slot of its own before the
+         *     read;
+         *   - then it reads, once, records what it read and signals.
+         *
+         * WHY NOT READ IN A LOOP WHILE THE HANDSHAKE RUNS, which is what this first did: measured, a
+         * thread which spins without synchronizing loses its slot to the churn of a TLS handshake, and
+         * the thread which takes the slot over carries its identity and epoch forward - so reads made
+         * before the takeover look ordered before the write, and no report comes. One run in 54
+         * reported (logs/astra4/cs9/tsan-red-65cf086*, tsan-diag1-reads-x10.txt). A single read made
+         * after the write, from a slot of its own, is checked against the write itself
          *
          * protocol( ) AND NOT A COPY OF THE WHOLE VALUE: a torn copy of the std::string could crash
          * where a read of the enum only reports, and a report is the verdict. The flag which publishes
@@ -285,9 +300,9 @@ namespace utest
             explicit OffStrandReader( SAA_in const bl::om::ObjPtr< bl::httpclient::ClientConnection >& connection )
                 :
                 m_connection( bl::om::copy( connection ) ),
+                m_isGo( false ),
                 m_isAbandoned( false ),
-                m_seen( bl::httpclient::HttpProtocol::Unknown ),
-                m_reads( 0U )
+                m_seen( bl::httpclient::HttpProtocol::Unknown )
             {
                 m_thread.reset( new bl::os::thread( [ this ]() -> void { run(); } ) );
             }
@@ -302,41 +317,32 @@ namespace utest
             }
 
             /**
-             * @brief Ends the reader, if it has not ended by itself, and joins it
+             * @brief Ends the reader, if it has not read yet, and joins it
              */
 
             void stop()
             {
-                m_isAbandoned.store( true );
+                m_isAbandoned.store( true, std::memory_order_relaxed );
 
                 bl::os::safeThreadJoin( *m_thread );
             }
 
-            bool waitForStart() const
-            {
-                return m_started.waitFor( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) );
-            }
-
             /**
-             * @brief Waits for the reader to read a settled protocol, and abandons it if it never does
+             * @brief Lets the reader make its one read - relaxed, so that it is ordered after nothing
              */
 
-            bool waitForSettled()
+            void go() NOEXCEPT
             {
-                const bool isSettled =
-                    m_settled.waitFor( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) );
+                m_isGo.store( true, std::memory_order_relaxed );
+            }
 
-                if( ! isSettled )
-                {
-                    m_isAbandoned.store( true );
-                }
-
-                return isSettled;
+            bool waitForRead() const
+            {
+                return m_read.waitFor( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) );
             }
 
             /**
-             * @brief What it read - valid once waitForSettled( ) has returned true, which the signal's
-             * lock orders after the write
+             * @brief What it read - valid once waitForRead( ) has returned true
              */
 
             bl::httpclient::HttpProtocol seen() const NOEXCEPT
@@ -344,61 +350,47 @@ namespace utest
                 return m_seen;
             }
 
-            /**
-             * @brief How many reads it made - valid once stop( ) has returned; for a failure message
-             */
-
-            std::size_t reads() const NOEXCEPT
-            {
-                return m_reads;
-            }
-
         private:
 
             void run()
             {
-                ( void ) m_connection -> negotiated().protocol();
-
-                ++m_reads;
-
-                m_started.signal();
-
-                for( ;; )
+                while( ! m_isGo.load( std::memory_order_relaxed ) )
                 {
-                    if( m_isAbandoned.load() )
+                    if( m_isAbandoned.load( std::memory_order_relaxed ) )
                     {
-                        return;
-                    }
-
-                    const auto protocol = m_connection -> negotiated().protocol();
-
-                    ++m_reads;
-
-                    if( bl::httpclient::HttpProtocol::Unknown != protocol )
-                    {
-                        m_seen = protocol;
-
-                        m_settled.signal();
-
                         return;
                     }
 
                     std::this_thread::yield();
                 }
+
+                {
+                    BL_MUTEX_GUARD( m_ownLock );
+                }
+
+                m_seen = m_connection -> negotiated().protocol();
+
+                m_read.signal();
             }
 
             const bl::om::ObjPtr< bl::httpclient::ClientConnection >            m_connection;
 
+            std::atomic< bool >                                                 m_isGo;
             std::atomic< bool >                                                 m_isAbandoned;
-            OneShotSignal                                                       m_started;
-            OneShotSignal                                                       m_settled;
 
             /*
-             * Written by the reader thread only; read by the case after a signal, or after the join
+             * Taken by the reader thread and by no other
+             */
+
+            bl::os::mutex                                                       m_ownLock;
+
+            OneShotSignal                                                       m_read;
+
+            /*
+             * Written by the reader thread only, before it signals m_read
              */
 
             bl::httpclient::HttpProtocol                                        m_seen;
-            std::size_t                                                         m_reads;
 
             bl::cpp::SafeUniquePtr< bl::os::thread >                            m_thread;
         };
@@ -1165,14 +1157,13 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadT
 }
 
 /**
- * @brief RED FOR THE RACE, UNDER THREADSANITIZER - a reader off the strand, taking no lock, reads the
- * real driver's negotiated( ) while it completes a real handshake, and sees the settled value
+ * @brief RED FOR THE RACE, UNDER THREADSANITIZER - a reader off the strand, ordered after nothing the
+ * strand did, reads the real driver's negotiated( ) once a real handshake has settled it, and sees h2
  *
- * The case passes on both sides of the fix. Its verdict is the sanitizer's: today the read which returns
- * Http2 read the byte continueAfterConnected( ) wrote, and nothing orders the two - the reader's last
- * synchronization is its start, before the driver is scheduled - so every instrumented run reports the
- * pair. After the fix the reader reads nothing the strand writes until its load of the published flag
- * returns true, and that load synchronizes with the store which follows the write
+ * The case passes on both sides of the fix. Its verdict is the sanitizer's: today the reader reads the
+ * byte continueAfterConnected( ) wrote, after the write and with no happens-before from it - see
+ * OffStrandReader - so the read is reported against the write. After the fix its load of the published
+ * flag reads true, and synchronizes with the store which follows the write, before it reads the value
  */
 
 UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests )
@@ -1196,15 +1187,17 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValue
     const auto connection = om::qi< ClientConnection >( driver );
     const auto task = om::qi< Task >( driver );
 
-    bool isStarted = false;
-    bool isSettled = false;
     bool isQuiet = false;
+    bool isRead = false;
     bool isStopped = false;
 
     HttpProtocol seen = HttpProtocol::Unknown;
-    std::size_t reads = 0U;
 
     {
+        /*
+         * Created BEFORE the driver is scheduled, so that nothing the strand does is in its past
+         */
+
         OffStrandReader reader( connection );
 
         scheduleAndExecuteInParallel(
@@ -1212,18 +1205,23 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValue
             {
                 eq -> setOptions( ExecutionQueue::OptionKeepAll );
 
-                isStarted = reader.waitForStart();
-
                 eq -> push_back( task );
 
-                isSettled = reader.waitForSettled();
+                /*
+                 * The opening write ends after the value was written, in the same chain of strand
+                 * handlers - so the reader is let go after the write, in time
+                 */
 
-                if( isSettled )
+                isQuiet = driver -> waitForQuiet( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) );
+
+                reader.go();
+
+                isRead = reader.waitForRead();
+
+                if( isRead )
                 {
                     seen = reader.seen();
                 }
-
-                isQuiet = driver -> waitForQuiet( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) );
 
                 task -> requestCancel();
 
@@ -1236,34 +1234,28 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValue
             );
 
         reader.stop();
-
-        reads = reader.reads();
     }
 
     const std::string readings =
-        std::string( "reader started " ) +
-        ( isStarted ? "yes" : "no" ) +
-        ", settled " +
-        ( isSettled ? "yes" : "no" ) +
+        std::string( "quiet " ) +
+        ( isQuiet ? "yes" : "no" ) +
+        ", read " +
+        ( isRead ? "yes" : "no" ) +
         ", saw " +
         protocolName( seen ) +
-        " after " +
-        utils::lexical_cast< std::string >( reads ) +
-        " reads, quiet " +
-        ( isQuiet ? "yes" : "no" ) +
         ", stopped " +
         ( isStopped ? "yes" : "no" ) +
         ", peer " +
         joinRecords( peer.records() );
 
-    chkOrFail( isStarted, "the reader never started; " + readings );
+    chkOrFail( isQuiet, "the driver's opening write never ended; " + readings );
 
     chkOrFail(
-        isSettled && HttpProtocol::Http2 == seen,
+        isRead && HttpProtocol::Http2 == seen,
         "the reader did not read the settled h2; " + readings
         );
 
-    chkOrFail( isQuiet && isStopped, "the driver did not run to its end; " + readings );
+    chkOrFail( isStopped, "the driver did not run to its end; " + readings );
 }
 
 /**
