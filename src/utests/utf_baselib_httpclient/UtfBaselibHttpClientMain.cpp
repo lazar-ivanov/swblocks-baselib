@@ -25,6 +25,15 @@
  *
  * Sockets: loopback
  *
+ * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 35.1 MB clang debug (a64) at
+ * 634fd4a as utf_objsize.py counts it ( 36,786,320 bytes ), which by the ratio win-x86 debug has
+ * shown over a64 clang debug on this family ( 1.13 to 1.17, row 5c of
+ * notes/plans/issues/astra-remediation-owed-work.md ) is about 39.6 to 41 MB on x86 - at the
+ * target; inferred, not measured, and the Windows handoff measures it. The request task's cases
+ * stay here because its probes are TestHttpClientRequestTask.h's and the headers after it build on
+ * them: a sibling would pay the ~21 MB floor again. A case which needs none of the probes goes to a
+ * numbered sibling
+ *
  * The module is devenv7+ only: the devenv7_only marker next to this file is what keeps it out of
  * the build on devenv2-6 (projects/make/common.mk). Headers never test BL_DEVENV_VERSION; they
  * guard on the capability they need - BOOST_VERSION, OPENSSL_VERSION_NUMBER - with a clear #error
