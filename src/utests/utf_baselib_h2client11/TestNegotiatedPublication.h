@@ -66,12 +66,12 @@
  *
  *   - NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadTests - the contract, from a pure
  *     input. An unstarted establishment base, and an unstarted HTTP/2 driver, each have their value
- *     written and not published. Today both getters return what was written.
+ *     written and not published. Before the fix both getters returned what was written.
  *   - NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests - the race, under
  *     ThreadSanitizer. A thread ordered after nothing the strand did reads the real driver's
- *     negotiated( ) once a real handshake has settled it. Today that read races the write
- *     (ClientConnectionTaskBase.h, continueAfterConnected( )). The case itself passes on both sides; its
- *     verdict is the sanitizer's report, read from the run's own output.
+ *     negotiated( ) once a real handshake has settled it. Before the fix that read raced the
+ *     write (ClientConnectionTaskBase.h, continueAfterConnected( )). The case itself passes on both
+ *     sides; its verdict is the sanitizer's report, read from the run's own output.
  *
  * THE CHARACTERIZATIONS, green on both sides of the fix - U01's own route, a request task over the real
  * driver, and its two controls:
@@ -294,7 +294,8 @@ namespace utest
          *   - while it waits, and before each read, it locks and unlocks a mutex which no other thread
          *     ever takes. That orders it after nothing but its own past. What it is for is
          *     ThreadSanitizer's own bookkeeping: see below;
-         *   - then it reads protocol( ) until it is not Unknown - once, today - records it and signals.
+         *   - then it reads protocol( ) until it is not Unknown - once, on either side of the fix -
+         *     records it and signals.
          *
          * WHY IT IS BUILT THIS WAY, measured and read at the runtime's source (compiler-rt 20.1.0,
          * tsan_rtl.cpp, FindSlotAndLock( ) and SlotAttachAndLock( )). ThreadSanitizer v3 shares 256
@@ -412,7 +413,8 @@ namespace utest
                 }
 
                 /*
-                 * READING, until the value is settled - today the first read is
+                 * READING, until the value is settled - the first read is, on either side of the
+                 * fix: the probe signals after the write and, with the fix, after the publication
                  */
 
                 for( ;; )
@@ -1319,11 +1321,11 @@ UTF_AUTO_TEST_CASE( NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadT
  * @brief RED FOR THE RACE, UNDER THREADSANITIZER - a reader off the strand, ordered after nothing the
  * strand did, reads the real driver's negotiated( ) once a real handshake has settled it, and sees h2
  *
- * The case passes on both sides of the fix. Its verdict is the sanitizer's: today the reader reads the
- * byte continueAfterConnected( ) wrote, just after the write and with no happens-before from it - see
- * OffStrandReader and NegotiatedSignalProbe - so the read is reported against the write. After the fix
- * its load of the published flag reads true, and synchronizes with the store which follows the write,
- * before it reads the value
+ * The case passes on both sides of the fix. Its verdict is the sanitizer's: before the fix the reader
+ * read the byte continueAfterConnected( ) wrote, just after the write and with no happens-before from
+ * it - see OffStrandReader and NegotiatedSignalProbe - so the read was reported against the write.
+ * With the fix its load of the published flag reads true, and synchronizes with the store which
+ * follows the write, before it reads the value
  */
 
 UTF_AUTO_TEST_CASE( NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests )

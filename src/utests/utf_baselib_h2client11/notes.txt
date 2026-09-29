@@ -2,8 +2,9 @@
 
 # CS-9 of Astra's fourth review - U01, the negotiated value read before it is published
 # (notes/plans/issues/astra4-cs9-negotiated-publication-design.md). The getter case is the red for
-# the contract: a value written and not published is read by neither getter. The reader case is the
-# red for the race, under ThreadSanitizer only - it passes on both sides, and its verdict is the
+# the contract: a value written and not published is read by neither getter; once published, a
+# reader on another thread gets it, the driver's while it still reads Connecting. The reader case is
+# the red for the race, under ThreadSanitizer only - it passes on both sides, and its verdict is the
 # sanitizer's report. The three request cases are characterizations, green on both sides of the fix:
 # Unknown for a cancel during a held handshake, h2 after the handshake, Http11 on the fallback.
 
