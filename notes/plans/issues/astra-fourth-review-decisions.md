@@ -2,7 +2,8 @@
 
 **Date:** 2026-09-29. **Status:** D1 taken by the maintainer on 2026-09-29: shape (a″), in which the
 connection publishes the value itself. **CS-9 landed 2026-09-29**, merged at `5db9ae8`, with its gate
-green (§3). Only the Windows matrix is owed.
+green (§3). Astra's fifth review found one defect in CS-9's test, V01, fixed by CS-10 (§4). Only the
+Windows matrix is owed.
 
 **The review:** [`http2-l0-l6-fourth-review-2026-09-28.md`](../http2-l0-l6-fourth-review-2026-09-28.md),
 of `045e889`.
@@ -202,3 +203,28 @@ The plan gives its files, tests and gate.
   - D2: its x86 debug size;
   - D3: whether it builds at x86 `ccl16` release.
 - **The owed list was swept.** CS-9 closed no row and adds none.
+
+## 4. Astra's fifth review — V01, a defect in CS-9's test, fixed by CS-10
+
+**The review:** [`http2-l0-l6-fifth-review-2026-09-29.md`](../http2-l0-l6-fifth-review-2026-09-29.md), of
+`c454aac`. It confirms U01 fixed, and establishes no production regression.
+
+- **V01 (P3, test only).** `runRide( )` read the probe's plain submitted handle even after the wait for
+  the submit had timed out (from `65cf086`). That is a data race on the path which reports that the
+  submit never came. No decision was needed, since the correction has one shape.
+- **CS-10 landed 2026-09-29**, merged at `f0890bd`.
+  - The fix, `ba52d2f`: the handle is read only after a wait which observed the submit.
+  - Comments only, `4af42a5`, `0e95781` and `5695381`: the gate's reason, the member's comment, and
+    `runRide( )`'s doc comment. That comment said "every wait is bounded", which its two queue waits
+    are not (the checkpoint's K1).
+  - **Red and green** came from an uncommitted diagnostic which makes the wait fail. The unfixed helper
+    read the handle after it, and the fixed one does not. The restores were proven by hash.
+  - **The search for the same shape** covered sixteen timed waits in the file and the helpers it uses.
+    Only V01's had the defect.
+  - **Runs:** 50 runs of `utf_baselib_h2client11` were clean, and the final binary is byte-identical to
+    the one they ran.
+  - **Review:** the orchestrator's first, then an Opus checkpoint, ready with changes. K1 to K3 and Pa
+    were folded. Pb and Pc went into the records: `7229647` and this commit.
+  - **Tier 1** is re-captured at `3f77e4e`. **The gate** is green on `3f77e4e`: `utf_baselib_h2client11`
+    in clang release and gcc debug, 2 of 2, each raw log read.
+- **Owed:** nothing new. D1 to D3 of the Windows handoff stand, and D2 now gives both sizes.

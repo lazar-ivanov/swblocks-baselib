@@ -3,7 +3,8 @@
 **Status, 2026-09-29: layers L0 to L6 are executed and remediated; L7 and L8 are not started.**
 - **L0 to L6:** executed 2026-09-17 to 2026-09-20. The L6R remediation of astra's first review
   (§8a) landed after them. The change-sets of astra's second review (CS-1 to CS-6), third review
-  (CS-7, CS-8) and fourth review (CS-9) landed on 2026-09-27 to 29 (§8, and their decision records).
+  (CS-7, CS-8), fourth review (CS-9) and fifth review (CS-10) landed on 2026-09-27 to 29 (§8, and
+  their decision records).
 - **Still owed for them:** only runs on other hosts — the Windows matrix, the x86-64 Linux matrix
   (deferred by the maintainer), and a compile on a devenv2 or devenv3 host — plus the deferrals the
   maintainer took, each recorded (`issues/astra-remediation-owed-work.md`).
@@ -2069,8 +2070,10 @@ orchestrator before planning. The decisions they need are put, and recorded, in
 - It folds what it finds, and asks its decisions during the run.
 - It is monitored from launch (`AGENTS.md` v2.16).
 
-**Astra's fifth review, 2026-09-29 — one change-set, planned 2026-09-29.** The review is
+**Astra's fifth review, 2026-09-29 — one change-set, planned and landed 2026-09-29.** The review is
 `http2-l0-l6-fifth-review-2026-09-29.md`, of `c454aac`.
+- **Landed:** CS-10 merged at `f0890bd`, with its gate green on `3f77e4e`, 2 of 2. The record is §4 of
+  `issues/astra-fourth-review-decisions.md`, since V01 was a defect in CS-9's test.
 - It confirms U01 fixed, and establishes no production regression from CS-9.
 - It finds one P3, **V01**, in CS-9's own test. `runRide( )` reads the probe's submitted handle even
   when the wait for the submit has timed out (`TestNegotiatedPublication.h:1122-1123`, from `65cf086`).
@@ -2086,7 +2089,7 @@ orchestrator before planning. The decisions they need are put, and recorded, in
 
 | Change-set | Finding | Files | Lane |
 |---|---|---|---|
-| **CS-10** | V01 — a timed-out wait followed by an unsynchronized read | `utf_baselib_h2client11/TestNegotiatedPublication.h`: `runRide( )` reads the handle only after a successful wait, and the member's comment says so | lane 1, branch `astra5-cs10` |
+| **CS-10** | V01 — a timed-out wait followed by an unsynchronized read | `utf_baselib_h2client11/TestNegotiatedPublication.h`: `runRide( )` reads the handle only after a successful wait, and the member's comment says so | lane 1, branch `astra5-cs10`; **landed** `f0890bd` |
 
 **How it runs.** One lane, under the same workflow, with no design note.
 - **The same shape elsewhere.** The lane searches CS-9's module, and the shared test helpers it uses,

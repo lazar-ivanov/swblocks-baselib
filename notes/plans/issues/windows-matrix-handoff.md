@@ -557,7 +557,8 @@ debug over the 22 affected modules, green 44 of 44 on `bb8d320`):
     check. It passes on both sides of the fix by design; its verdict is ThreadSanitizer's, which this
     host lacks.
 - **D2. `utf_baselib_h2client11`'s x86 debug size.** Record it. It is 39,802,696 bytes at a64 clang
-  debug - 38.0 MB as `utf_objsize.py` counts - which is about 43 to 44 MB on x86 by the ratio row 5c
+  debug at CS-9's merge, and 39,802,744 after CS-10's (`f0890bd`) - 38.0 MB either way, as
+  `utf_objsize.py` counts - which is about 43 to 44 MB on x86 by the ratio row 5c
   measured, 1.13 to 1.17: inferred, not measured. That is over the 40 MB target and under the 75 MB
   ceiling, and its reason is in its `Main.cpp`: the HTTP/2 driver over the stranded TLS policy, which
   every case instantiates.
