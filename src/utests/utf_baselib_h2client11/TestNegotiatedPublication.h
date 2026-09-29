@@ -1120,7 +1120,11 @@ namespace utest
                     eq -> push_back( requestTask );
 
                     result.isSubmitted = driver -> waitForSubmit();
-                    result.handle = driver -> submittedHandle();
+
+                    if( result.isSubmitted )
+                    {
+                        result.handle = driver -> submittedHandle();
+                    }
 
                     eq -> push_back( driverTask );
 
