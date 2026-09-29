@@ -1,7 +1,7 @@
 # CS-9 / U01 — the connection publishes its negotiated value: design note
 
-**Date:** 2026-09-29. **Status:** revision 3, written by lane 1, for review. No production code is
-written until this note carries its agreement line.
+**Date:** 2026-09-29. **Status:** revision 4, written by lane 1 — **agreed 2026-09-29** (see the
+agreement line at the end). CS-9 is implemented to this note, in the commits which follow this one (§8).
 
 **Revisions.**
 - r1 `8f1cec6`.
@@ -11,7 +11,11 @@ written until this note carries its agreement line.
     reader is rebuilt, and its reason is the runtime's slot sharing, read at its source;
   - §7.4: the module is measured, 37.9 MB;
   - §8: the commits so far.
-- **r3 (this)** carries review round 1: `astra4/reviews/cs9-note-r1.md`, agree with changes, and the
+- **r4 (this)** carries review round 2 (`astra4/reviews/cs9-note-r1.md`, "Round 2 - note r3
+  (886ac88)", agree with changes): N1 to N3, P3 and text only, taken as the review words them, each checked
+  at its source first - N1 and N2 in §7.2, N3 under §7.2's rate table and in §7.5. It adds the agreement
+  line. Nothing else changes.
+- r3 `886ac88` carried review round 1: `astra4/reviews/cs9-note-r1.md`, agree with changes, and the
   orchestrator's `cs9-note-orchestrator-r1.md`, whose O1 and O2 are the reviewer's R7 and R5.
   - The orchestrator accepted every finding, and refined R9.
   - The review agreed §1 to §6's mechanism as written, and no finding changes it.
@@ -347,27 +351,35 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
   - **The shadow cells were enough here, but not for r1's reason** (R1). Shadow values are kept per slot,
     epoch, byte mask and kind, not per thread (`tsan_shadow.h`; the runtime files cited here are archived
     in `logs/astra4/cs9/tsan-src/`, with their checksums).
-    - Before the reader reads, this byte's word holds three:
-      - the allocation's 8-byte write (`tsan_mman.cpp:260-276`, then `tsan_rtl_access.cpp:633-639`);
-      - the constructor's 1-byte write - both of these the constructing thread's;
-      - the strand's write at `:656`.
-    - The strand's own read at `Http2ConnectionTask.h:2755` adds a fourth only when a release separates
-      it from the write. Nothing does while trace logging is off - `BL_LOG`'s `isEnabled( )` takes no lock
-      (`Logging.h:494-498`, `:299-305`) - and it is off in these runs, whose level is `LL_DEBUG`, the UTF
-      default (`UtfArgsParser.h:540`). So `ContainsSameAccess( )` skips that read: it falls in the write's
-      epoch (`tsan_rtl_access.cpp:172-192`).
-    - Either way, four cells hold them all, and nothing is evicted before the reader's read. A fifth
-      value would evict one chosen by trace position (`:195-232`).
-    - VERIFIED at the runtime's source and the library's. What r1 missed is not here.
+    - Before the reader reads, this byte's word holds four values (N1):
+      - the allocation's 8-byte write (`tsan_mman.cpp:260-276`, then `tsan_rtl_access.cpp:633-639`) and
+        the constructor's 1-byte write, both the constructing thread's;
+      - the strand's write at `:656`;
+      - the strand's own read at `Http2ConnectionTask.h:2755`. It is recorded, because
+        `NegotiatedSignalProbe::onProtocolNegotiated( )` signals between the two: a mutex unlock, which
+        advances the strand's epoch (`tsan_rtl_mutex.cpp:216-254`). Without that signal, and with trace
+        logging off as it is here (`UtfArgsParser.h:540`), the read would fall in the write's epoch and
+        `ContainsSameAccess( )` would skip it (`tsan_rtl_access.cpp:172-192`).
+    - Four values fit the four cells, so none is evicted before the reader's read. That read meets the
+      write while it checks them: `CheckRaces( )` reports before it would evict
+      (`tsan_rtl_access.cpp:195-232`).
+    - VERIFIED at the runtime's source, the library's and the test's (`TestNegotiatedPublication.h:476-481`,
+      the signal before `base_type::onProtocolNegotiated( )`; `TlsTeardownTestUtils.h:111-118`, the
+      signal's mutex). What r1 missed is not here.
   - **What r1 missed: the slots.** ThreadSanitizer v3 shares 256 slots among the threads
     (`tsan_defs.h:58`).
     - A slot handed from one thread to another keeps its sid and its epoch (`tsan_rtl.cpp:252-321`), and
-      a thread learns that it lost its slot only at its next synchronization (`:357-375`).
+      a thread learns that it lost its slot only when it next locks its slot - at a synchronization, or
+      when it switches trace parts (`:357-375`, `:964-965`). N2: r3 said "only at its next
+      synchronization", which omitted the second; the mechanism stands - reads are recorded under a lost
+      sid until the thread notices.
     - When every slot's 14-bit epoch is spent, the whole shadow is reset (`:233-280`).
     - So a reader which synchronizes with nothing goes on recording its reads under a sid which another
       thread may own at a higher epoch. Once that thread's clock reaches the strand, the reads compare as
-      ordered before the write (`tsan_rtl_access.cpp:218`).
-    - A TLS handshake spends slots fast. VERIFIED at the runtime's source and by the runs.
+      ordered before the write (`tsan_rtl_access.cpp:218`). VERIFIED at the runtime's source.
+    - That a TLS handshake spends enough to hand a waiting thread's slot over within the window is
+      INFERRED (N2), not read: the source shows what spends a slot - 14-bit epochs, one per release
+      (`tsan_defs.h:63-66`, `tsan_rtl_mutex.cpp:253-254`) - and the runs show misses.
 - **Hence the construction above:** the read follows the write by tens of microseconds, from a slot of
   the reader's own. The rates, per committed reader - each commit's own runs first, then the same
   source's runs before it was committed:
@@ -378,8 +390,18 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
   | `b644819`: let go once the opening write has ended, a round trip after the write | 50 of 51 (1 of 1; then 49 of 50, run 12 clean) | 51 of 51 |
   | `4451fd0`: let go by the strand's signal, just after the write - the reader now in the tree | 51 of 51 (1 of 1; then 50 of 50) | 51 of 51 (blob `a493b53`, the committed one) |
 
+  - **How sameness is known** (N3). The "same source" column is corroborated, not recorded: the
+    pre-commit batches record only `HEAD` and a modified file, not a hash of what ran
+    (`tsan-red2-wt-x50/summary.log`, `tsan-red3-wt-x50/summary.log`). What corroborates it is equal
+    binary sizes and identical report-frame offsets:
+    - `tsan-red2-wt` and `b644819`: 16,024,656 bytes, with `:371` at `+0x8adaa8` in every report;
+    - `tsan-red3-wt` and `4451fd0`: 16,037,352 bytes, with `:409` at `+0x8af49c` in every report.
+
+    From now on every batch's header records `git hash-object` of the sources this change-set changes,
+    the green batches included.
   - `b644819`'s window, a round trip, is long enough for a handover or a reset to lose the write's
-    record; `4451fd0`'s has not lost it in 102 runs.
+    record, and that is how run 12's miss is explained - INFERRED (N2), not observed. `4451fd0`'s window
+    has not lost it in 102 runs.
   - Every report is the reader's read (`TestNegotiatedPublication.h:409`) against the write at
     `ClientConnectionTaskBase.h:656`, made holding the task lock (M0 in the report is `TaskBase::m_lock`,
     first taken in `scheduleNothrow( )`).
@@ -390,9 +412,17 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
   - The logs are `logs/astra4/cs9/tsan-red-*`; `tsan-red-READ.txt` reads them.
 - **What is certain and what is measured.**
   - The race is certain at the source.
-  - What the instrument sees is not certain by construction, because its runtime can drop the record of
-    either access. So this red is a measurement - 102 reports in 102 runs of the committed reader - with
-    the reason a miss stays possible recorded, and it is paired with a green of 50 runs (§7.5).
+  - What the instrument sees is not certain by construction. The committed reader can still miss in two
+    ways (N2):
+    - **a global reset** inside the window between the write and the read, which wipes the write's
+      record (`tsan_rtl.cpp:233-280`);
+    - **the reader landing on the strand's own slot.** When preempted, the reader re-attaches at its
+      next private-mutex lock, to the least recently attached slot (`tsan_rtl.cpp:252-321`), and that
+      slot can be the one the strand wrote under. A pair with the same sid is not compared at all:
+      `CheckRaces( )` skips it (`tsan_rtl_access.cpp:208-214`). The record is not dropped; the
+      comparison is skipped.
+  - So this red is a measurement - 102 reports in 102 runs of the committed reader, which stands - with
+    both ways a miss stays possible recorded, and it is paired with a green of 50 runs (§7.5).
   - The deterministic red for the contract is §7.1's.
 - **Why the fixed run cannot report, which is certain by construction.**
   - The reader's first read loads the flag. When it reads `true` it synchronizes with the store which
@@ -498,6 +528,8 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
   on the tree before them is not a run on what merges.
 - **Before the comments, only what is needed to see the fix work:** one ordinary build and run of the
   module after the logic commit, and again after the publish half is added.
+- **Every run's header records `git hash-object` of the sources this change-set changes** (N3), so that
+  what ran is recorded and not only corroborated.
 
 **What runs, on that tree:**
 - **§7.1 is deterministic.** It is shown red once, which is done (`65cf086`, and again at `eba918d`),
@@ -531,11 +563,12 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
 3. `b644819` and `4451fd0` tests: the reader rebuilt twice (§7.2).
 4. `eba918d` comments: a count in the reader's comment corrected.
 5. `a43477f` this note, r2.
-6. This revision, r3.
+6. `886ac88` this note, r3.
+7. This revision, r4, with the agreement line.
 
 **To come, in order:**
 
-1. The note's dated agreement line, once the orchestrator sends it.
+1. *(Done in r4: the agreement line.)*
 2. **Logic:** `ClientConnectionTaskBase.h` (flag, default, helper, getter, `<atomic>`) and
    `Http2ConnectionTask.h` (the getter delegates). Run only to see the fix work (§7.5): the module
    once, with §7.1 green.
@@ -553,3 +586,11 @@ replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9
    - the deterministic cases run on Windows; ThreadSanitizer does not;
    - the module's a64 size and its x86 estimate;
    - whether it builds at x86 `ccl16` release (R8).
+
+**Agreement: 2026-09-29.**
+- **Reviewed:** two rounds by an Opus reviewer (`astra4/reviews/cs9-note-r1.md`, rounds 1 and 2), with the
+  orchestrator's own review of r1 (`cs9-note-orchestrator-r1.md`).
+- **Agreed by the reviewer** on revision 3 (`886ac88`), with changes N1 to N3 (P3, text only), taken in
+  this revision as the review words them.
+- **Agreed by the orchestrator**, who checks this revision against the review.
+- **The mechanism, §1 to §6, is r1's.** The rounds changed §7 and the text only.
