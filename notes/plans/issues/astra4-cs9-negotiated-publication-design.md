@@ -1,7 +1,14 @@
 # CS-9 / U01 — the connection publishes its negotiated value: design note
 
-**Date:** 2026-09-29. **Status:** revision 1, written by lane 1, for review. No production code is
+**Date:** 2026-09-29. **Status:** revision 2, written by lane 1, for review. No production code is
 written until this note carries its agreement line.
+
+**Revisions.** r1 `8f1cec6`. **r2 (this)** carries what the tests on today's code found, with nothing in
+the mechanism (§1 to §6) changed:
+- §7.2: r1's premise for the ThreadSanitizer red was wrong - measured, it reported in 1 run of 54. The
+  reader is rebuilt, and its reason is the runtime's slot sharing, read at its source;
+- §7.4: the module is measured, 37.9 MB;
+- §8: the commits so far.
 
 **The decision.** D1 of [`astra-fourth-review-decisions.md`](astra-fourth-review-decisions.md), taken
 by the maintainer on 2026-09-29: shape (a″). `continueAfterConnected( )` writes `m_negotiated` once and
@@ -192,28 +199,68 @@ All five are in one new module (§7.4). `tls_stream_t` is the stranded TLS polic
 - It asserts that the base's `negotiated( )`, and the driver's through `ClientConnection`, return
   `Unknown` with no identifier. Each half is checked without stopping the case, so a run shows both.
 - **Today both return `h2`: a red which is certain, from a pure input** - one thread, no timing.
+  Measured at `65cf086` and again at `eba918d`: both halves fail with `Http2 'h2'`
+  (`logs/astra4/cs9/red-65cf086-run.log`, `red-8f1cec6-READ.txt`, `red-eba918d-run.log`).
 - After the fix, each type also calls `publishNegotiated( )` with the value, and a thread started
   afterwards reads each getter and gets `Http2` and `"h2"`. The thread's start orders the read after
   the publication; what this pins is that a published value is what every reader gets.
 
 ### 7.2 The ThreadSanitizer pair — the red for the race
 
-- The real driver (`Http2DriverProbe`) over TLS against `TlsEndingPeer` selecting `h2`
-  (`AwaitTheClient`).
-- **A reader thread takes no lock and reads `negotiated( ).protocol( )` through `ClientConnection`.**
-  It reads once and signals that it has started; the case schedules the driver only after that signal.
-  Then the reader loops until it reads a protocol other than `Unknown`, records it, and signals again.
-  The loop's only other operation is a load of an atomic "abandon" flag, which the case stores only if
-  that signal never comes - so on a passing run the load reads its initial value and synchronizes with
-  nothing. The case asserts that the reader saw `Http2`.
-- **Why today's run reports, every run.** The read which returns `Http2` read the byte the strand wrote
-  at `:656`, so it follows that write in real time. Nothing orders the two: the reader's last
-  synchronization is its first signal, before the driver was scheduled. At most three threads touch that
-  byte's word - the constructing thread, the strand's and the reader - so ThreadSanitizer's four shadow
-  cells still hold the write. INFERRED from ThreadSanitizer's shadow model, and to be shown by the red.
-- **Why the fixed run cannot report.** The reader reads `m_unsettled`, written before its thread was
-  created, until its load of the flag returns `true`; that load synchronizes with the store which
-  follows the write.
+*Rebuilt in r2: r1's construction reported in 1 run of 54. What r1 said, why it was wrong, and what
+replaced it follow; the logs and the runtime's source are under `logs/astra4/cs9/`
+(`tsan-red-READ.txt`, `tsan-src/`).*
+
+- The real driver over TLS against `TlsEndingPeer` selecting `h2` (`AwaitTheClient`). The shared probe
+  is derived in the module as `NegotiatedSignalProbe`, which signals from `onProtocolNegotiated( )`.
+  `continueAfterConnected( )` calls that right after the write, in the same handler - and, with the fix,
+  after the publication.
+- **A reader thread, ordered after nothing the strand did, reads `negotiated( ).protocol( )` through
+  `ClientConnection`.**
+  - It is created before the driver is scheduled.
+  - It waits until the case lets it go, which the case does, by a relaxed store, as soon as the probe
+    signals. A relaxed store and load are not synchronization to the C++ model or to ThreadSanitizer,
+    which is the only reason they are relaxed.
+  - While it waits, it sleeps in 20 us steps, and at each step it takes a mutex which no other thread
+    takes. That orders it after nothing but its own past.
+  - Then it reads until the protocol is not `Unknown` - once, today - and signals. The case asserts it
+    saw `Http2`.
+- **r1's premise, corrected.**
+  - **What r1 said.** r1's reader took no lock and read in a loop from before the driver started. It
+    reasoned: "At most three threads touch that byte's word ... so ThreadSanitizer's four shadow cells
+    still hold the write" - so every run would report.
+  - **What was measured.** 1 run in 54 reported. A count showed about 20,000 concurrent reads in every
+    run, so the reads were not missing.
+  - **What r1 missed: the slots.** The premise held for the shadow cells. ThreadSanitizer v3 shares 256
+    slots among the threads (`tsan_defs.h:58`).
+    - A slot handed from one thread to another keeps its sid and its epoch (`tsan_rtl.cpp:252-321`), and
+      a thread learns that it lost its slot only at its next synchronization (`:357-375`).
+    - When every slot's 14-bit epoch is spent, the whole shadow is reset (`:233-280`).
+    - So a reader which synchronizes with nothing goes on recording its reads under a sid which another
+      thread may own at a higher epoch. Once that thread's clock reaches the strand, the reads compare as
+      ordered before the write (`tsan_rtl_access.cpp:218`).
+    - A TLS handshake spends slots fast. VERIFIED at the runtime's source and by the runs.
+- **Hence the construction above:** the read follows the write by tens of microseconds, from a slot of
+  the reader's own.
+  - A second construction let the reader go once the driver's opening write had ended, a round trip
+    after the write, and it reported in 101 runs of 102. That window is long enough for a handover or a
+    reset to lose the write's record.
+  - The committed one reported in 102 of 102 (`4451fd0`). Every report is the reader's read
+    (`TestNegotiatedPublication.h:409`) against the write at `ClientConnectionTaskBase.h:656`, made
+    holding the task lock.
+  - The positive control reported in the same tree. The whole module under ThreadSanitizer gives that
+    report and no other.
+- **What is certain and what is measured.**
+  - The race is certain at the source.
+  - What the instrument sees is not certain by construction, because its runtime can drop the record of
+    either access. So this red is a measurement, 102 of 102, with the reason a miss stays possible
+    recorded.
+  - The deterministic red for the contract is §7.1's.
+- **Why the fixed run cannot report, which is certain by construction.**
+  - The reader's first read loads the flag. When it reads `true` it synchronizes with the store which
+    follows the write, so its read of the member is ordered after the write.
+  - If it read `false` it would read `m_unsettled`, written before its thread was created, and read
+    again.
 - **`protocol( )` and not a copy of the whole value.** On today's code a torn `std::string` copy can
   crash where a byte read only reports; a report is the verdict. The flag gates the whole object, so
   what a `protocol( )` read shows holds for a copy. The composed cases (§7.3) are what copy the whole
@@ -265,34 +312,47 @@ All five are in one new module (§7.4). `tls_stream_t` is the stranded TLS polic
 
 - `utf_baselib_h2client11`, new and reserved for this lane: `Main.cpp`, `notes.txt` with a recipe per
   case, and the `devenv7_only` marker - the stranded policies need Boost 1.72.
-- **What it pays for:** the HTTP/2 driver over the stranded TLS policy, and the request task. The
-  driver alone costs `utf_baselib_h2client10` 37.6 MB at a64 clang debug. So this module is expected at
-  or above the 40 MB target.
-- **A split cannot lower it.** Case (a) alone needs both the driver and the request task, and the
-  other four cases need the driver. So the reason is recorded in `Main.cpp`, as `utf_baselib_h2client9`
-  and `…10` record theirs, and the D-section of `windows-matrix-handoff.md` gives the a64 size and the
-  x86 estimate.
-- **The measurement is committed with the tests, before the review closes,** and this section is then
-  updated with it. `utf_baselib_httpclient14` stays reserved and unused.
+- **Measured: 37.9 MB at a64 clang debug**, 16.9 MB over the empty module's floor, and under the 40 MB
+  target (39,731,232 bytes at `65cf086`, 39,771,872 at `eba918d`; `utf_objsize.py` in
+  `logs/astra4/cs9/red-*-build.log`). By the ratio win-x86 debug has shown over a64 clang debug (1.11
+  to 1.17), it is about 42 to 44 MB on x86 - inferred, not measured.
+- **What it pays for:** the HTTP/2 driver over the stranded TLS policy, as r1 expected. The request
+  task, which r1 expected to cost more, is the small part: `utf_baselib_h2client10` carries the driver
+  and no request task, and is 37.6 MB.
+- **A split cannot lower it**, since every case instantiates the driver. `Main.cpp` records the size and
+  its reason, as `utf_baselib_h2client9` and `…10` record theirs. The D-section of
+  `windows-matrix-handoff.md` gives the a64 size and the x86 estimate.
+- `utf_baselib_httpclient14` stays reserved and unused.
 
 ### 7.5 Runs
 
 - 50 runs of the five cases after the fix, at clang debug. This is the default regression count; no
   rate is the criterion here.
-- The reds are deterministic, and are shown red once and green once: §7.1 by construction, §7.2 by the
-  argument above.
+- **§7.1 is deterministic:** red once (done, `65cf086`), green once after the fix.
+- **§7.2's red is measured** (above). Its green is certain by construction, and is shown by one run
+  and 50, with the positive control in the same tree.
 - Then `utf_baselib_h2client`, `…2`, `…3` and `utf_baselib_httpclient`, one at a time; and tier 1, with
   its report explained in the lane's journal.
+- Tier 1 at `eba918d` reports six lines, all additions: the five cases (C1) and the module's helper
+  namespace (C6). The orchestrator re-captures the baseline after integration
+  (`logs/astra4/cs9/tier1-eba918d.log`).
 
-## 8. Commits, in order
+## 8. Commits
 
-1. This note.
-2. Tests: the new module - §7.1's red half, §7.2's case, §7.3's characterizations - with the measured
-   size. Evidence: §7.1 red, the rest green, §7.2 red under ThreadSanitizer, with the positive control.
-3. The note's dated agreement line, once the orchestrator sends it.
-4. Logic: `ClientConnectionTaskBase.h` (flag, default, helper, getter, `<atomic>`) and
+**Landed on the branch before the agreement:**
+
+1. `8f1cec6` this note, r1.
+2. `65cf086` tests: the new module - §7.1's red half, r1's reader, §7.3's characterizations.
+3. `b644819` and `4451fd0` tests: the reader rebuilt twice (§7.2).
+4. `eba918d` comments: a count in the reader's comment corrected.
+5. This revision.
+
+**To come, in order:**
+
+1. The note's dated agreement line, once the orchestrator sends it.
+2. Logic: `ClientConnectionTaskBase.h` (flag, default, helper, getter, `<atomic>`) and
    `Http2ConnectionTask.h` (the getter delegates). Evidence: §7.1 green, §7.3 green, §7.2 green.
-5. Tests: §7.1's publish half.
-6. Comments, one commit per file, per §6.
-7. The D-section of `windows-matrix-handoff.md`: the deterministic cases run on Windows; ThreadSanitizer
+3. Tests: §7.1's publish half.
+4. Comments, one commit per file, per §6.
+5. The D-section of `windows-matrix-handoff.md`: the deterministic cases run on Windows; ThreadSanitizer
    does not.
