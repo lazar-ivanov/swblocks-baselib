@@ -24,17 +24,17 @@
  *
  * WHY THIS MODULE EXISTS, and it is the size policy. utf_baselib_tasks is 67.7MB at win-x86 debug,
  * utf_baselib_tasks2 instantiates no TLS stream policy, and utf_baselib_tasks3, which carries the four
- * stream policies' teardown cases of CS-6, is 36.9 MB at a64 clang debug - near the 40 MB target,
+ * stream policies' teardown cases of CS-6, is 35.2 MB at a64 clang debug - near the 40 MB target,
  * where no case is added
  *
  * WHAT THIS MODULE PAYS FOR. The connection establisher over the four stream policies - cleartext
  * and TLS, each with and without a strand - and loopback listeners, some with a full accept queue.
  * No TLS peer: nothing here reaches a handshake
  *
- * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 31.9 MB clang debug (a64) at
- * 751c34e, which by the ratio win-x86 debug has shown over a64 clang debug (1.11 to 1.17,
+ * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 30.4 MB clang debug (a64) at
+ * 8866065, which by the ratio win-x86 debug has shown over a64 clang debug (1.13 to 1.17,
  * notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) is
- * about 35 to 37 MB on x86, under the target - inferred, not measured; the Windows handoff measures
+ * about 34 to 36 MB on x86, under the target - inferred, not measured; the Windows handoff measures
  * it. The weight is the connection establisher over the four stream policies; there is no TLS peer
  *
  * Sockets: loopback only, on ephemeral ports, so no machine global test lock is needed. Some cases

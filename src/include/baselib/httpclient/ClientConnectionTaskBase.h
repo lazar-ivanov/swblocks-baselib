@@ -33,6 +33,7 @@
 #include <baselib/core/TimeUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <atomic>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -362,13 +363,32 @@ namespace bl
             const ClientConnectionConfig                                        m_config;
 
             /*
-             * Written once, on the strand, in continueAfterConnected, and read afterwards. The
-             * DRIVER's own copy is the one which must be const - negotiated() returns a reference
-             * and the pool and the request task read it off the strand - and the driver is given
-             * the value at construction, below, which is the one moment it is in hand
+             * Written once, on the strand, by publishNegotiated( ), which then sets
+             * m_isNegotiatedPublished. Off the strand it is read ONLY through negotiated( ), which
+             * reads the flag first: a driver which IS this task answers ClientConnection::negotiated( )
+             * by delegating to it, and never returns this member. A factory-built driver is given the
+             * value at construction, below - the one moment it is in hand - and holds it const
              */
 
             httpclient::NegotiatedProtocol                                      m_negotiated;
+
+            /*
+             * Set by publishNegotiated( ), once m_negotiated holds the settled value, and never
+             * cleared. negotiated( ) loads it first, so no reader off the strand reads m_negotiated
+             * before the write is over - it reads m_unsettled until then
+             */
+
+            std::atomic< bool >                                                 m_isNegotiatedPublished;
+
+            /*
+             * What negotiated( ) answers until the value is published: default constructed,
+             * HttpProtocol::Unknown with no identifier. Per object and const, so it lives exactly as
+             * long as the member it stands in for and is never written
+             * (notes/plans/issues/astra4-cs9-negotiated-publication-design.md, section 4)
+             */
+
+            const httpclient::NegotiatedProtocol                                m_unsettled;
+
             om::ObjPtr< httpclient::ClientConnection >                          m_connection;
 
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_connectTimer;
@@ -398,7 +418,8 @@ namespace bl
                     ),
                 m_key( BL_PARAM_FWD( key ) ),
                 m_driverFactory( BL_PARAM_FWD( driverFactory ) ),
-                m_config( BL_PARAM_FWD( config ) )
+                m_config( BL_PARAM_FWD( config ) ),
+                m_isNegotiatedPublished( false )
             {
                 BL_CHK_T(
                     false,
@@ -643,6 +664,33 @@ namespace bl
                 return false;
             }
 
+            /**
+             * @brief Writes the settled value and then publishes it - the one write of m_negotiated
+             *
+             * THE WRITE, THEN THE FLAG, and both before anything reads the value: the trace in
+             * continueAfterConnected( ), onProtocolNegotiated( ) - which publishes Ready on the h2 path
+             * - and every reader through negotiated( ). A reader whose load of the flag sees it set
+             * synchronizes with this store, so it reads the value written here and never one being
+             * written
+             *
+             * AT MOST ONCE PER TASK, which is what makes one flag enough. continueAfterConnected( ) is
+             * the handshake handler's continuation: the establisher restarts only an attempt whose
+             * handshake did not complete, and refuses a second run of the task
+             * (notes/plans/issues/astra4-cs9-negotiated-publication-design.md, section 1). The
+             * assertion is the tripwire for a route which would write twice
+             *
+             * Protected, so that a test can publish a value it wrote; nothing else is exposed for it
+             */
+
+            void publishNegotiated( SAA_in httpclient::NegotiatedProtocol negotiated )
+            {
+                BL_ASSERT( ! m_isNegotiatedPublished.load() );
+
+                m_negotiated = BL_PARAM_FWD( negotiated );
+
+                m_isNegotiatedPublished.store( true );
+            }
+
             virtual bool continueAfterConnected() OVERRIDE
             {
                 base_type::ensureChannelIsOpen();
@@ -653,9 +701,11 @@ namespace bl
 
                 chkNegotiatedParametersMeetFloor();
 
-                m_negotiated = tls_ops_t::negotiatedProtocol(
-                    base_type::getStream(),
-                    m_config.cleartextProtocol
+                publishNegotiated(
+                    tls_ops_t::negotiatedProtocol(
+                        base_type::getStream(),
+                        m_config.cleartextProtocol
+                        )
                     );
 
                 BL_LOG(
@@ -751,13 +801,15 @@ namespace bl
             /**
              * @brief What the connection speaks and the identifier which settled it
              *
-             * Default constructed - HttpProtocol::Unknown with no identifier - until the handshake
-             * has completed and ALPN has been read
+             * Safe from any thread at any time. Default constructed - HttpProtocol::Unknown with no
+             * identifier - until the value is published ( publishNegotiated( ) ), and then the settled
+             * value. The reference names an object which is never written afterwards: one taken before
+             * the publication stays Unknown, so a caller which wants a later value asks again
              */
 
             auto negotiated() const NOEXCEPT -> const httpclient::NegotiatedProtocol&
             {
-                return m_negotiated;
+                return m_isNegotiatedPublished.load() ? m_negotiated : m_unsettled;
             }
 
             /**

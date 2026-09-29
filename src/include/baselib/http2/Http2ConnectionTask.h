@@ -200,12 +200,17 @@ namespace bl
          * A driver built by the factory receives the value at construction and stores it const,
          * which is what makes the reference-returning accessor safe under off-strand reads. This
          * driver cannot: it IS the establishing task, so the value is settled by the handshake and
-         * not by a constructor argument. What replaces the const is a publication order - the
-         * strand writes m_negotiated and only afterwards stores Ready into the atomic state - and
-         * a rule: READ state( ) FIRST. A reader which observes anything other than Connecting has
-         * a happens-before with the write, and one which observes Connecting must not look.
-         * freeStreamSlots( ) is an atomic for the same reason: it answers a question about the
-         * session, which is strand state a caller may not touch.
+         * not by a constructor argument. What replaces the const is a publication the establishment
+         * base makes itself: it writes the value once and then sets an atomic flag
+         * ( publishNegotiated( ) ), and its negotiated( ) reads the flag first - Unknown with no
+         * identifier until it is set, the settled value from then on. So the getter is safe from
+         * any thread at any time, and no reader needs a rule: not state( ) first, and not Ready,
+         * which follows the publication and is this driver's own later state. This class's
+         * negotiated( ) delegates to the base's and never returns the member itself
+         * (notes/plans/issues/astra4-cs9-negotiated-publication-design.md).
+         *
+         * freeStreamSlots( ) is an atomic because it too is read off the strand: it answers a
+         * question about the session, which is strand state a caller may not touch.
          */
 
         template
@@ -2800,9 +2805,9 @@ namespace bl
 
                 /*
                  * Ready BEFORE the commands are drained, so that the first request's HEADERS can
-                 * join the preface which the session queued in its constructor. This is the only
-                 * write of m_negotiated's publication order (see the class comment): it has been
-                 * written by continueAfterConnected above, and this store is what releases it
+                 * join the preface which the session queued in its constructor. The negotiated
+                 * value was published before this, by continueAfterConnected( ) (see the class
+                 * comment): Ready follows the value's own publication, and releases nothing of it
                  */
 
                 publishState( ConnectionState::Ready );
@@ -3100,15 +3105,17 @@ namespace bl
             }
 
             /**
-             * @brief What this connection speaks - valid once state( ) is not Connecting
+             * @brief What this connection speaks - safe from any thread at any time
              *
-             * See the class comment for why this is not the const member a factory-built driver
-             * has, and what takes its place
+             * The establishment base publishes the value, and this delegates to its getter; see the
+             * class comment for why this is not the const member a factory-built driver has. The
+             * reference names an object which is never written afterwards, so a caller which
+             * wants a later value asks again
              */
 
             virtual auto negotiated() const NOEXCEPT -> const httpclient::NegotiatedProtocol& OVERRIDE
             {
-                return base_type::m_negotiated;
+                return base_type::negotiated();
             }
 
             /**

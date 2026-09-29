@@ -496,3 +496,66 @@ tip in the result. The decisions are in `astra-third-review-decisions.md`.
 - **C2. `utf_baselib_httpclient`'s x86 debug size.** Record it. CS-7 added 95,056 bytes at a64 clang
   debug, to 36,786,320 - 35.1 MB as `utf_objsize.py` counts - which is about 39.6 to 41 MB on x86 by
   the ratio row 5c measured: inferred, not measured. Its reason is in its `Main.cpp`.
+
+---
+
+## Astra's fourth review, 2026-09-29 — what CS-9 owes Windows
+
+**Run only from a tip the maintainer has pushed** that contains CS-9's merge, and record the tip in the
+result. *(The merge commit is filled in when CS-9 lands.)* The decision is D1 of
+`astra-fourth-review-decisions.md`, shape (a″), and the mechanism is in
+`astra4-cs9-negotiated-publication-design.md`, agreed.
+
+**What CS-9 changed:** the HTTP client's connection publishes its negotiated protocol itself.
+`ClientConnectionTaskBaseT::continueAfterConnected( )` writes the value once, then sets an atomic flag,
+and both getters - the base's and the HTTP/2 driver's - read the flag first: `Unknown` with no
+identifier until it is set, the settled value from then on. **It changes no transport error handling.**
+
+**What Linux established** (lane 1, clang debug; the gate's clang release and gcc debug runs are the
+orchestrator's, recorded when CS-9 lands):
+- The getter case's red was deterministic, and it is green after the fix.
+- The race it closes was red under ThreadSanitizer in 102 of 102 runs of the committed reader, and in
+  none of 50 after the fix, with the positive control reporting in both trees.
+- The three request cases were green on both sides of the fix, and `utf_baselib_h2client11` ran 50
+  times clean.
+- The driver and contract modules the lane may build - `utf_baselib_h2client`, `…2`, `…3` and
+  `utf_baselib_httpclient` - are green at clang debug: 12, 14, 3 and 78 cases.
+- `ClientConnection.h`'s comment edit is preprocess-identical, so it changes no object on any platform.
+
+**What Linux cannot settle:**
+
+- **D1. Run `utf_baselib_h2client11` whole.** Its five cases, and what each means on Windows:
+  - `NegotiatedPublication_AValueWrittenButNotPublishedIsNotReadTests` - the contract. One thread, a
+    pure input, no I/O: it is expected green anywhere. It is the one case which separates the decided
+    shape from the withdrawn (a′), since it reads the published value from a driver still `Connecting`.
+  - `NegotiatedPublication_ACancelDuringAHeldHandshakeReportsUnknownTests` - U01's own route. Its
+    handshake is held by a listener which never accepts, as `utf_baselib_h2client10`'s connect-deadline
+    reds hold one (B7), so it rests on two things this host has not measured:
+    - the connect completing from the listener's backlog before any accept, as it does on Linux - the
+      same arrangement as those reds;
+    - the driver's cancel ending a held TLS handshake on IOCP, which is B4 to B6.
+
+    It asserts the request's own cancel and its `Unknown` value, which are platform-independent. Its
+    slot comes back only from the driver's terminal, so if the driver's cancel does not end the held
+    handshake, neither the release nor the stop arrives: the case waits 30 s for each and then waits
+    without a bound for the driver task, which only the driver's own 60 s connect deadline, re-issuing
+    the cancel (CS-6's (a2)), can end. It then fails first on "the request did not give its one slot
+    back exactly once", with "released no" and "driver stopped no" in its description - read B4
+    first. If it hangs instead, the re-issued cancel did not end the handshake either. Every case here
+    which cancels its driver ends in such a wait, so a hang in any of them points the same way: B4
+    before the handshake, B7 after it.
+  - `NegotiatedPublication_ACancelAfterTheHandshakeReportsH2Tests` - rests on the driver's
+    application-phase cancel, which B7 characterizes in `utf_baselib_h2client10`.
+  - `NegotiatedPublication_AFallbackToHttp11ReportsHttp11Tests` - the http/1.1 fallback, with a stub
+    driver which keeps the stream. Expected platform-independent.
+  - `NegotiatedPublication_AReaderOffTheStrandSeesTheSettledValueTests` - on Windows only a functional
+    check. It passes on both sides of the fix by design; its verdict is ThreadSanitizer's, which this
+    host lacks.
+- **D2. `utf_baselib_h2client11`'s x86 debug size.** Record it. It is 39,802,696 bytes at a64 clang
+  debug - 38.0 MB as `utf_objsize.py` counts - which is about 43 to 44 MB on x86 by the ratio row 5c
+  measured, 1.13 to 1.17: inferred, not measured. That is over the 40 MB target and under the 75 MB
+  ceiling, and its reason is in its `Main.cpp`: the HTTP/2 driver over the stranded TLS policy, which
+  every case instantiates.
+- **D3. Whether it builds at x86 `ccl16` release.** Object size does not govern that combination, so
+  the size above says nothing about it (`src/utests/AGENTS.md`, "The x86 release caveat"). The only
+  check is the build.
