@@ -1,11 +1,21 @@
 # HTTP/2 Client Library: Implementation Plan
 
-**Status:** written 2026-09-17 as a plan with nothing built, run or probed. **Layer L0 was executed on
-2026-09-17/18** - slices S0.1-S0.4 implemented in parallel worktrees, merged, release-validated, and
+**Status, 2026-09-28: layers L0 to L6 are executed and remediated; L7 and L8 are not started.**
+- **L0 to L6:** executed 2026-09-17 to 2026-09-20. The L6R remediation of astra's first review
+  (§8a) landed after them. The change-sets of astra's second review (CS-1 to CS-6) and third review
+  (CS-7, CS-8) landed on 2026-09-27 and 28 (§8, and their decision records).
+- **Still owed for them:** only runs on other hosts — the Windows matrix, the x86-64 Linux matrix
+  (deferred by the maintainer), and a compile on a devenv2 or devenv3 host — plus the deferrals the
+  maintainer took, each recorded (`issues/astra-remediation-owed-work.md`).
+- **L7 (impersonation, §9) and L8 (facade, tooling, verification, §10):** not started.
+
+*Status line corrected 2026-09-28, under `AGENTS.md` v2.17's sweep. It had read, as written
+2026-09-19: "L1 and L2 were executed on 2026-09-18/19; L3 onwards is still unexecuted."*
+
+**History.** Written 2026-09-17 as a plan with nothing built, run or probed. **Layer L0 was executed
+on 2026-09-17/18** - slices S0.1-S0.4 implemented in parallel worktrees, merged, release-validated, and
 the G1 gate (S0.5) passed at `gcc1520` debug; see §2 for the result, its two stated limits and the
-three follow-ups it left. **L1 and L2 were executed on 2026-09-18/19** (§3, §4); **L3 onwards is still
-unexecuted.** Every probe outside L0-L2 remains folded
-into the slice that needs it, to be run by the implementing agent at execution time.
+three follow-ups it left. **L1 and L2 were executed on 2026-09-18/19** (§3, §4).
 
 **Spec.** This plan implements `notes/plans/http2-design.md` ("the design"). The design is the
 specification; this plan is the work breakdown, the dependency graph, the parallelization schedule and
