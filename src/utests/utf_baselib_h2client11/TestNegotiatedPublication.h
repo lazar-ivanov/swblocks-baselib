@@ -1124,8 +1124,8 @@ namespace utest
 
                     /*
                      * THE HANDLE IS READ ONLY AFTER A WAIT WHICH OBSERVED THE SUBMIT. Nothing else
-                     * orders the read after the probe's write: after a failed wait the request may be
-                     * making that write, or have yet to make it. The handle then keeps its invalid
+                     * orders the read after the probe's write, which a failed wait leaves unordered
+                     * whether the request has made it yet or not. The handle then keeps its invalid
                      * default, which chkRodeAndReleasedOnce( ) reports as never submitted
                      */
 
