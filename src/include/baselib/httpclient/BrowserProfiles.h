@@ -108,10 +108,11 @@ namespace bl
          *     session merges or drops; authorization, a credential; content-length and
          *     transfer-encoding, the framing; keep-alive, proxy-connection and upgrade, which
          *     RFC 9113 8.2.2 forbids and no browser sends by default
-         *   - every list bounded - the MAX_ constants below, each but the two MAX_ADVERTISED_ ones
-         *     a generous multiple of what a browser sends, because the point is a finite ceiling
-         *     rather than a tight fit; and no list repeats an element where a repeat has no
-         *     meaning on the wire
+         *   - every list and every string bounded - the MAX_ constants below, each but the two
+         *     MAX_ADVERTISED_ ones and the three name sizes, which are OpenSSL's own, a generous
+         *     multiple of what a browser sends, because the point is a finite ceiling rather than
+         *     a tight fit; each checked before any other work on what it bounds; and no list
+         *     repeats an element where a repeat has no meaning on the wire
          *
          * THE VERSION STRINGS (6.2). userAgent, secChUaBrands and platform change every few weeks
          * while the shape changes a few times a year, and a refresh must be an edit of those three
@@ -168,11 +169,11 @@ namespace bl
         public:
 
             /*
-             * The bounds. Each but the two MAX_ADVERTISED_ ones is a generous multiple of what a
-             * browser sends - Chrome offers about fifteen suites, four groups, eight signature
-             * algorithms and four SETTINGS, and sends about fifteen headers per request - so that a
-             * real profile never meets one, while a hostile document meets a finite ceiling on
-             * every list it can grow
+             * The bounds. Each but the two MAX_ADVERTISED_ ones and the three name sizes is a
+             * generous multiple of what a browser sends - Chrome offers about fifteen suites, four
+             * groups, eight signature algorithms and four SETTINGS, and sends about fifteen headers
+             * per request - so that a real profile never meets one, while a hostile document meets
+             * a finite ceiling on every list and every string it can grow
              */
 
             enum : std::size_t
@@ -193,6 +194,23 @@ namespace bl
                 MAX_ACCEPT_ENCODINGS                    = 16U,
                 MAX_ACCEPT_LANGUAGE_QVALUES             = 16U,
                 MAX_SEC_CH_UA_BRANDS                    = 8U,
+
+                /*
+                 * The strings. The three name bounds are OpenSSL 3.5's own: a longer group name is
+                 * a syntax error to it (ssl/t1_lib.c, GROUP_NAME_BUFFER_LENGTH) and a longer
+                 * signature algorithm name an error (TLS_MAX_SIGSTRING_LEN), while it skips a TLS
+                 * 1.3 suite name of 80 bytes or more without a word (ssl/ssl_ciph.c) - refused here
+                 * instead, each at its path. The rest are generous multiples of what a browser
+                 * sends; a composed value, sec-ch-ua or sec-ch-ua-platform, is held to the header
+                 * value bound too
+                 */
+
+                MAX_CIPHER_SUITE_NAME_SIZE              = 64U,
+                MAX_GROUP_NAME_SIZE                     = 63U,
+                MAX_SIGNATURE_ALGORITHM_NAME_SIZE       = 39U,
+                MAX_HEADER_NAME_SIZE                    = 128U,
+                MAX_HEADER_VALUE_SIZE                   = 8U * 1024U,
+                MAX_DEVIATION_SIZE                      = 256U,
 
                 /*
                  * What a profile advertises for SETTINGS_HEADER_TABLE_SIZE and
@@ -271,6 +289,18 @@ namespace bl
                 if( size > bound )
                 {
                     refuse( path, "has more than " + std::to_string( bound ) + " entries" );
+                }
+            }
+
+            static void chkSize(
+                SAA_in          const std::string&                              path,
+                SAA_in          const std::string&                              text,
+                SAA_in          const std::size_t                               bound
+                )
+            {
+                if( text.size() > bound )
+                {
+                    refuse( path, "is longer than " + std::to_string( bound ) + " bytes" );
                 }
             }
 
@@ -454,6 +484,8 @@ namespace bl
             {
                 VersionStrings result;
 
+                chkSize( "userAgent", model.userAgent(), MAX_HEADER_VALUE_SIZE );
+
                 if( ! model.userAgent().empty() && ! isFieldValue( model.userAgent() ) )
                 {
                     refuse( "userAgent", "is not a valid field value" );
@@ -512,6 +544,20 @@ namespace bl
                     }
                 }
 
+                /*
+                 * The composed values are header values, held to the header value bound - refused
+                 * at the property they are composed from, since that is what a refresh edits
+                 */
+
+                if( result.secChUa.size() > MAX_HEADER_VALUE_SIZE )
+                {
+                    refuse(
+                        "secChUaBrands",
+                        "composes a sec-ch-ua value longer than " +
+                            std::to_string( static_cast< std::size_t >( MAX_HEADER_VALUE_SIZE ) ) + " bytes"
+                        );
+                }
+
                 if( ! isPrintableAscii( model.platform() ) )
                 {
                     refuse( "platform", "carries a character outside printable ASCII" );
@@ -520,6 +566,15 @@ namespace bl
                 if( ! model.platform().empty() )
                 {
                     result.secChUaPlatform = structuredFieldString( model.platform() );
+                }
+
+                if( result.secChUaPlatform.size() > MAX_HEADER_VALUE_SIZE )
+                {
+                    refuse(
+                        "platform",
+                        "composes a sec-ch-ua-platform value longer than " +
+                            std::to_string( static_cast< std::size_t >( MAX_HEADER_VALUE_SIZE ) ) + " bytes"
+                        );
                 }
 
                 return result;
@@ -678,6 +733,8 @@ namespace bl
                 {
                     const auto& deviation = model.deviations()[ i ];
 
+                    chkSize( at( "deviations", i ), deviation, MAX_DEVIATION_SIZE );
+
                     if( deviation.empty() || ! isPrintableAscii( deviation ) )
                     {
                         refuse(
@@ -708,6 +765,8 @@ namespace bl
                 for( std::size_t i = 0U; i < names.size(); ++i )
                 {
                     const auto& name = names[ i ];
+
+                    chkSize( at( path, i ), name, MAX_CIPHER_SUITE_NAME_SIZE );
 
                     if( ! crypto::TlsNameRules::isNameSafe( name ) )
                     {
@@ -765,6 +824,8 @@ namespace bl
                 {
                     const auto& name = groups[ i ] -> name();
 
+                    chkSize( at( "tls.groups", i ) + ".name", name, MAX_GROUP_NAME_SIZE );
+
                     if( ! crypto::TlsNameRules::isGroupNameAllowed( name ) )
                     {
                         refuse( at( "tls.groups", i ) + ".name", "is not a plain group name" );
@@ -792,6 +853,8 @@ namespace bl
 
                 for( std::size_t i = 0U; i < algorithms.size(); ++i )
                 {
+                    chkSize( at( "tls.signatureAlgorithms", i ), algorithms[ i ], MAX_SIGNATURE_ALGORITHM_NAME_SIZE );
+
                     if( ! crypto::TlsNameRules::isSignatureAlgorithmNameAllowed( algorithms[ i ] ) )
                     {
                         refuse(
@@ -1264,6 +1327,8 @@ namespace bl
             {
                 const auto& name = model.name();
 
+                chkSize( path + ".name", name, MAX_HEADER_NAME_SIZE );
+
                 if( ! isLowerCaseToken( name ) )
                 {
                     refuse( path + ".name", "is not a lower-case token" );
@@ -1272,6 +1337,8 @@ namespace bl
                 /*
                  * The name is a token from here, so it is safe to name in a message
                  */
+
+                chkSize( path + ".value", model.value(), MAX_HEADER_VALUE_SIZE );
 
                 if( ! isFieldValue( model.value() ) )
                 {
@@ -1463,6 +1530,15 @@ namespace bl
 
                 for( auto it = caseMap.begin(); it != caseMap.end(); ++it )
                 {
+                    if( it -> first.size() > MAX_HEADER_NAME_SIZE )
+                    {
+                        refuse(
+                            path + ".http1CaseMap",
+                            "has a key longer than " +
+                                std::to_string( static_cast< std::size_t >( MAX_HEADER_NAME_SIZE ) ) + " bytes"
+                            );
+                    }
+
                     if( ! isLowerCaseToken( it -> first ) )
                     {
                         refuse( path + ".http1CaseMap", "has a key which is not a lower-case token" );
@@ -1481,6 +1557,8 @@ namespace bl
                 }
 
                 result.http1CaseMap = caseMap;
+
+                chkSize( path + ".priorityHeaderValue", model -> priorityHeaderValue(), MAX_HEADER_VALUE_SIZE );
 
                 if( ! isFieldValue( model -> priorityHeaderValue() ) )
                 {
@@ -1523,6 +1601,8 @@ namespace bl
 
                 for( std::size_t i = 0U; i < codings.size(); ++i )
                 {
+                    chkSize( at( "headers.acceptEncoding", i ), codings[ i ], MAX_HEADER_NAME_SIZE );
+
                     if( ! http::HeaderList::isValidHeaderName( codings[ i ] ) )
                     {
                         refuse( at( "headers.acceptEncoding", i ), "is not a token" );

@@ -28,4 +28,5 @@
 --log_level=message --run_test=BrowserProfiles_HeaderNamesAndValuesAreValidatedTests
 --log_level=message --run_test=BrowserProfiles_HttpOneOnlyHeadersAreRepresentedTests
 --log_level=message --run_test=BrowserProfiles_PlacementCaseMapAndCodingsAreValidatedTests
+--log_level=message --run_test=BrowserProfiles_StringsAreBoundedTests
 --log_level=message --run_test=BrowserProfiles_UnknownBuiltInIdIsNotFoundTests

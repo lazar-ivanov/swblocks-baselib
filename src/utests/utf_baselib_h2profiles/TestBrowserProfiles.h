@@ -2307,6 +2307,257 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_PlacementCaseMapAndCodingsAreValidatedTests 
     }
 }
 
+UTF_AUTO_TEST_CASE( BrowserProfiles_StringsAreBoundedTests )
+{
+    using namespace bl;
+    using namespace utest::browserprofiles;
+
+    typedef httpclient::BrowserProfiles profiles;
+
+    /*
+     * Every string is bounded as every list is, refused at its path and accepted at its bound (the
+     * checkpoint review's P-2). The three name bounds are OpenSSL 3.5's own: a longer group or
+     * signature algorithm name is an error to it, and it skips a TLS 1.3 suite name of 80 bytes or
+     * more without a word. The rest are generous multiples of what a browser sends
+     */
+
+    const ProfileDocument document;
+
+    const auto tooLong = []( SAA_in const std::size_t bound ) -> std::string
+    {
+        return " is longer than " + std::to_string( bound ) + " bytes";
+    };
+
+    /*
+     * A string of exactly 'size' bytes: the prefix, then 'fill' up to the size
+     */
+
+    const auto sized = [](
+        SAA_in          const std::string&                              prefix,
+        SAA_in          const std::size_t                               size,
+        SAA_in          const char                                      fill
+        ) -> std::string
+    {
+        return prefix + std::string( size - prefix.size(), fill );
+    };
+
+    {
+        auto suites = document;
+
+        const std::size_t bound = profiles::MAX_CIPHER_SUITE_NAME_SIZE;
+
+        suites.cipherSuitesTls12 = "[ \"AES128-SHA\", " + quoted( sized( "SUITE-", bound, 'A' ) ) + " ]";
+        UTF_REQUIRE_EQUAL( requireLoads( suites ).tls.cipherSuitesTls12[ 1 ].size(), bound );
+
+        suites.cipherSuitesTls12 = "[ \"AES128-SHA\", " + quoted( sized( "SUITE-", bound + 1U, 'A' ) ) + " ]";
+        requireRefused( suites, "tls.cipherSuitesTls12[1]" + tooLong( bound ) );
+
+        suites = document;
+
+        suites.cipherSuitesTls13 = "[ " + quoted( sized( "TLS_", bound, 'A' ) ) + " ]";
+        UTF_REQUIRE_EQUAL( requireLoads( suites ).tls.cipherSuitesTls13[ 0 ].size(), bound );
+
+        suites.cipherSuitesTls13 = "[ " + quoted( sized( "TLS_", bound + 1U, 'A' ) ) + " ]";
+        requireRefused( suites, "tls.cipherSuitesTls13[0]" + tooLong( bound ) );
+    }
+
+    {
+        auto groups = document;
+
+        const std::size_t bound = profiles::MAX_GROUP_NAME_SIZE;
+
+        groups.groups = R"json([ { "name": ")json" + sized( "GROUP-", bound, 'A' ) + R"json(" } ])json";
+        UTF_REQUIRE_EQUAL( requireLoads( groups ).tls.groups[ 0 ].name.size(), bound );
+
+        groups.groups = R"json([ { "name": ")json" + sized( "GROUP-", bound + 1U, 'A' ) + R"json(" } ])json";
+        requireRefused( groups, "tls.groups[0].name" + tooLong( bound ) );
+    }
+
+    {
+        auto algorithms = document;
+
+        const std::size_t bound = profiles::MAX_SIGNATURE_ALGORITHM_NAME_SIZE;
+
+        algorithms.signatureAlgorithms = "[ \"ed25519\", " + quoted( sized( "sigalg_", bound, 'a' ) ) + " ]";
+        UTF_REQUIRE_EQUAL( requireLoads( algorithms ).tls.signatureAlgorithms[ 1 ].size(), bound );
+
+        algorithms.signatureAlgorithms = "[ \"ed25519\", " + quoted( sized( "sigalg_", bound + 1U, 'a' ) ) + " ]";
+        requireRefused( algorithms, "tls.signatureAlgorithms[1]" + tooLong( bound ) );
+    }
+
+    {
+        auto deviations = document;
+
+        const std::size_t bound = profiles::MAX_DEVIATION_SIZE;
+
+        deviations.deviations = "[ " + quoted( sized( "deviation ", bound, 'd' ) ) + " ]";
+        UTF_REQUIRE_EQUAL( requireLoads( deviations ).deviations[ 0 ].size(), bound );
+
+        deviations.deviations = "[ " + quoted( sized( "deviation ", bound + 1U, 'd' ) ) + " ]";
+        requireRefused( deviations, "deviations[0]" + tooLong( bound ) );
+    }
+
+    /*
+     * Header names - a default header's, a coding and a case map's key, whose value is its key in
+     * another case and so is bounded with it
+     */
+
+    {
+        const std::size_t bound = profiles::MAX_HEADER_NAME_SIZE;
+
+        const std::string accept = R"json({ "name": "accept", "value": "image/test" })json";
+
+        auto names = document;
+
+        names.subresource = replaced(
+            document.subresource,
+            accept,
+            accept + R"json(, { "name": ")json" + sized( "x-", bound, 'a' ) + R"json(", "value": "v" })json"
+            );
+        UTF_REQUIRE_EQUAL(
+            kindOf( requireLoads( names ), httpclient::HttpRequestKind::Subresource ).defaultHeaders[ 2 ].name.size(),
+            bound
+            );
+
+        names.subresource = replaced(
+            document.subresource,
+            accept,
+            accept + R"json(, { "name": ")json" + sized( "x-", bound + 1U, 'a' ) + R"json(", "value": "v" })json"
+            );
+        requireRefused( names, "headers.subresource.defaultHeaders[2].name" + tooLong( bound ) );
+
+        auto codings = document;
+
+        codings.acceptEncoding = "[ \"gzip\", " + quoted( sized( "enc-", bound, 'e' ) ) + " ]";
+        UTF_REQUIRE_EQUAL( requireLoads( codings ).headers.acceptEncoding[ 1 ].size(), bound );
+
+        codings.acceptEncoding = "[ \"gzip\", " + quoted( sized( "enc-", bound + 1U, 'e' ) ) + " ]";
+        requireRefused( codings, "headers.acceptEncoding[1]" + tooLong( bound ) );
+
+        const std::string caseMap = R"json("user-agent": "User-Agent")json";
+
+        auto map = document;
+
+        map.navigation = replaced(
+            document.navigation,
+            caseMap,
+            caseMap + ", " + quoted( sized( "x-", bound, 'a' ) ) + ": " + quoted( sized( "X-", bound, 'A' ) )
+            );
+        UTF_REQUIRE_EQUAL(
+            kindOf( requireLoads( map ), httpclient::HttpRequestKind::Navigation ).http1CaseMap.size(),
+            4U
+            );
+
+        map.navigation = replaced(
+            document.navigation,
+            caseMap,
+            caseMap + ", " + quoted( sized( "x-", bound + 1U, 'a' ) ) + ": " + quoted( sized( "X-", bound + 1U, 'A' ) )
+            );
+        requireRefused(
+            map,
+            "headers.navigation.http1CaseMap has a key longer than " + std::to_string( bound ) + " bytes"
+            );
+    }
+
+    /*
+     * Header values - a default header's, the user agent, the priority value, and the two values the
+     * loader composes, each refused at the property it is composed from
+     */
+
+    {
+        const std::size_t bound = profiles::MAX_HEADER_VALUE_SIZE;
+
+        const std::string accept = R"json({ "name": "accept", "value": "image/test" })json";
+
+        auto values = document;
+
+        values.subresource = replaced(
+            document.subresource,
+            accept,
+            R"json({ "name": "accept", "value": ")json" + sized( "v", bound, 'v' ) + R"json(" })json"
+            );
+        UTF_REQUIRE_EQUAL(
+            kindOf( requireLoads( values ), httpclient::HttpRequestKind::Subresource ).defaultHeaders[ 1 ].value.size(),
+            bound
+            );
+
+        values.subresource = replaced(
+            document.subresource,
+            accept,
+            R"json({ "name": "accept", "value": ")json" + sized( "v", bound + 1U, 'v' ) + R"json(" })json"
+            );
+        requireRefused( values, "headers.subresource.defaultHeaders[1].value" + tooLong( bound ) );
+
+        auto agent = document;
+
+        agent.userAgent = quoted( sized( "agent/", bound, 'a' ) );
+        UTF_REQUIRE_EQUAL(
+            kindOf( requireLoads( agent ), httpclient::HttpRequestKind::Subresource ).defaultHeaders[ 0 ].value.size(),
+            bound
+            );
+
+        agent.userAgent = quoted( sized( "agent/", bound + 1U, 'a' ) );
+        requireRefused( agent, "userAgent" + tooLong( bound ) );
+
+        const std::string priority = R"json("priorityHeaderValue": "u=0, i")json";
+
+        auto priorityValue = document;
+
+        priorityValue.navigation = replaced(
+            document.navigation,
+            priority,
+            R"json("priorityHeaderValue": ")json" + sized( "u=0", bound, 'i' ) + "\""
+            );
+        UTF_REQUIRE_EQUAL(
+            kindOf( requireLoads( priorityValue ), httpclient::HttpRequestKind::Navigation ).priorityHeaderValue.size(),
+            bound
+            );
+
+        priorityValue.navigation = replaced(
+            document.navigation,
+            priority,
+            R"json("priorityHeaderValue": ")json" + sized( "u=0", bound + 1U, 'i' ) + "\""
+            );
+        requireRefused( priorityValue, "headers.navigation.priorityHeaderValue" + tooLong( bound ) );
+
+        /*
+         * A brand with no version composes to itself in double quotes, and so does the platform, so
+         * each is two bytes short of the value it composes
+         */
+
+        auto brands = document;
+
+        brands.secChUaBrands = R"json([ { "brand": ")json" + sized( "B", bound - 2U, 'b' ) + R"json(" } ])json";
+        UTF_REQUIRE_EQUAL(
+            kindOf( requireLoads( brands ), httpclient::HttpRequestKind::Navigation ).defaultHeaders[ 2 ].value.size(),
+            bound
+            );
+
+        brands.secChUaBrands = R"json([ { "brand": ")json" + sized( "B", bound - 1U, 'b' ) + R"json(" } ])json";
+        requireRefused(
+            brands,
+            "secChUaBrands composes a sec-ch-ua value longer than " + std::to_string( bound ) + " bytes"
+            );
+
+        auto platform = document;
+
+        platform.platform = quoted( sized( "P", bound - 2U, 'p' ) );
+
+        const auto loaded = requireLoads( platform );
+
+        UTF_REQUIRE_EQUAL(
+            kindOf( loaded, httpclient::HttpRequestKind::Navigation ).defaultHeaders[ 4 ].value.size(),
+            bound
+            );
+
+        platform.platform = quoted( sized( "P", bound - 1U, 'p' ) );
+        requireRefused(
+            platform,
+            "platform composes a sec-ch-ua-platform value longer than " + std::to_string( bound ) + " bytes"
+            );
+    }
+}
+
 UTF_AUTO_TEST_CASE( BrowserProfiles_UnknownBuiltInIdIsNotFoundTests )
 {
     using namespace bl;
