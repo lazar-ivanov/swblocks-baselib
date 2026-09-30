@@ -83,11 +83,19 @@ namespace bl
          *   - the TLS names by crypto::TlsNameRules - a plain name, and no anonymous or NULL suite
          *   - ALPN protocol ids of 1 to 255 bytes of visible ASCII (RFC 7301)
          *   - SETTINGS ids and values in range: an id is 16 bits and a value 32 (RFC 9113 6.5.1);
-         *     the ids of 6.5.2 this library interprets are held to that section's ranges and
+         *     the ids of 6.5.2 this library interprets are held to that section's ranges,
          *     SETTINGS_ENABLE_PUSH to zero, because this client never accepts a push (D11) and the
-         *     session refuses a profile which says otherwise; every other id passes through
-         *     unread, as http2::Http2Profile allows. A repeated id is legal - 6.5.3 gives it a
-         *     meaning, the later value, and the session implements exactly that
+         *     session refuses a profile which says otherwise, and SETTINGS_HEADER_TABLE_SIZE and
+         *     SETTINGS_MAX_HEADER_LIST_SIZE to MAX_ADVERTISED_HEADER_TABLE_SIZE and
+         *     MAX_ADVERTISED_HEADER_LIST_SIZE, because the session adopts what it advertises for
+         *     either as its own HPACK decoding bound (http2/Session.h, SessionLimits) and a
+         *     document could otherwise lift both; every other id passes through unread, as
+         *     http2::Http2Profile allows. A repeated id is legal - 6.5.3 gives it a meaning, the
+         *     later value, and the session implements exactly that. Those two ceilings are held at
+         *     the largest value a browser is known to advertise rather than at a generous multiple
+         *     of it: the decoder's work for each literal a peer sends grows with the table. The
+         *     values are design 6.4's, which the captures confirm or raise; until a capture raises
+         *     one, a supplied profile which advertises more is refused
          *   - the flow-control numbers the session casts or adds to a window, in range
          *   - priority fields in range: stream ids and dependencies of 31 bits, a weight of 8 -
          *     the octet on the wire, so the fingerprint's weight 256 is 255 here - no PRIORITY on
@@ -100,9 +108,10 @@ namespace bl
          *     session merges or drops; authorization, a credential; content-length and
          *     transfer-encoding, the framing; keep-alive, proxy-connection and upgrade, which
          *     RFC 9113 8.2.2 forbids and no browser sends by default
-         *   - every list bounded - the MAX_ constants below, each a generous multiple of what a
-         *     browser sends, because the point is a finite ceiling rather than a tight fit; and
-         *     no list repeats an element where a repeat has no meaning on the wire
+         *   - every list bounded - the MAX_ constants below, each but the two MAX_ADVERTISED_ ones
+         *     a generous multiple of what a browser sends, because the point is a finite ceiling
+         *     rather than a tight fit; and no list repeats an element where a repeat has no
+         *     meaning on the wire
          *
          * THE VERSION STRINGS (6.2). userAgent, secChUaBrands and platform change every few weeks
          * while the shape changes a few times a year, and a refresh must be an edit of those three
@@ -157,10 +166,11 @@ namespace bl
         public:
 
             /*
-             * The bounds. Each is a generous multiple of what a browser sends - Chrome offers about
-             * fifteen suites, four groups, eight signature algorithms and four SETTINGS, and sends
-             * about fifteen headers per request - so that a real profile never meets one, while a
-             * hostile document meets a finite ceiling on every list it can grow
+             * The bounds. Each but the two MAX_ADVERTISED_ ones is a generous multiple of what a
+             * browser sends - Chrome offers about fifteen suites, four groups, eight signature
+             * algorithms and four SETTINGS, and sends about fifteen headers per request - so that a
+             * real profile never meets one, while a hostile document meets a finite ceiling on
+             * every list it can grow
              */
 
             enum : std::size_t
@@ -181,6 +191,18 @@ namespace bl
                 MAX_ACCEPT_ENCODINGS                    = 16U,
                 MAX_ACCEPT_LANGUAGE_QVALUES             = 16U,
                 MAX_SEC_CH_UA_BRANDS                    = 8U,
+
+                /*
+                 * What a profile advertises for SETTINGS_HEADER_TABLE_SIZE and
+                 * SETTINGS_MAX_HEADER_LIST_SIZE the session adopts as its own HPACK decoding bounds,
+                 * so these two are held at the largest value a browser is known to advertise
+                 * rather than at a generous multiple of it: the decoder's work for each literal a
+                 * peer sends grows with the table. Until a capture raises one, a supplied profile
+                 * which advertises more is refused - see the class note
+                 */
+
+                MAX_ADVERTISED_HEADER_TABLE_SIZE        = 65536U,
+                MAX_ADVERTISED_HEADER_LIST_SIZE         = 262144U,
             };
 
         private:
@@ -200,9 +222,11 @@ namespace bl
                 MAX_MAX_FRAME_SIZE                      = 16777215U,
                 MAX_PRIORITY_WEIGHT                     = 255U,
 
+                SETTINGS_HEADER_TABLE_SIZE              = 0x1U,
                 SETTINGS_ENABLE_PUSH                    = 0x2U,
                 SETTINGS_INITIAL_WINDOW_SIZE            = 0x4U,
                 SETTINGS_MAX_FRAME_SIZE                 = 0x5U,
+                SETTINGS_MAX_HEADER_LIST_SIZE           = 0x6U,
             };
 
             typedef dm::httpclient::BrowserProfile                              model_t;
@@ -887,6 +911,26 @@ namespace bl
                             at( "http2.settings", i ) + ".value",
                             "is outside 16384 to 16777215, the range of SETTINGS_MAX_FRAME_SIZE "
                             "(RFC 9113 6.5.2)"
+                            );
+                    }
+
+                    if( SETTINGS_HEADER_TABLE_SIZE == wireId && value > MAX_ADVERTISED_HEADER_TABLE_SIZE )
+                    {
+                        refuse(
+                            at( "http2.settings", i ) + ".value",
+                            "is above " +
+                                std::to_string( static_cast< std::size_t >( MAX_ADVERTISED_HEADER_TABLE_SIZE ) ) +
+                                ", the largest SETTINGS_HEADER_TABLE_SIZE a profile may advertise"
+                            );
+                    }
+
+                    if( SETTINGS_MAX_HEADER_LIST_SIZE == wireId && value > MAX_ADVERTISED_HEADER_LIST_SIZE )
+                    {
+                        refuse(
+                            at( "http2.settings", i ) + ".value",
+                            "is above " +
+                                std::to_string( static_cast< std::size_t >( MAX_ADVERTISED_HEADER_LIST_SIZE ) ) +
+                                ", the largest SETTINGS_MAX_HEADER_LIST_SIZE a profile may advertise"
                             );
                     }
 

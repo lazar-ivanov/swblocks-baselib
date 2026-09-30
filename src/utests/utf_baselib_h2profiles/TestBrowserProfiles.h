@@ -1534,27 +1534,54 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_Http2SettingsAreValidatedTests )
     }
 
     /*
-     * The boundaries of all of it, accepted - with ids 0, 8, 9 and 65535, which this library does
-     * not interpret, passed through with any value, and a repeated id kept where it stands: 6.5.3
-     * gives a repeat its meaning, the later value, and the session implements exactly that
+     * The two the session adopts as its own HPACK decoding bounds - the dynamic table a peer may
+     * fill and the header list it may send - which RFC 9113 leaves unbounded: a profile may not
+     * lift the client's limits through them (the checkpoint review's C1-1)
+     */
+
+    settings.settings = R"json([ { "id": 1, "value": 65537 } ])json";
+    requireRefused(
+        settings,
+        "http2.settings[0].value is above 65536, the largest SETTINGS_HEADER_TABLE_SIZE a profile may advertise"
+        );
+
+    settings.settings = R"json([ { "id": 3, "value": 100 }, { "id": 6, "value": 262145 } ])json";
+    requireRefused(
+        settings,
+        "http2.settings[1].value is above 262144, the largest SETTINGS_MAX_HEADER_LIST_SIZE a profile may "
+        "advertise"
+        );
+
+    /*
+     * The boundaries of all of it, accepted - ids 1 and 6 at their ceilings; id 3 at the full 32
+     * bits, since nothing of the client is bounded by what it advertises there; ids 0, 8, 9 and
+     * 65535, which this library does not interpret, passed through with any value; and a repeated
+     * id kept where it stands: 6.5.3 gives a repeat its meaning, the later value, and the session
+     * implements exactly that
      */
 
     settings.settings =
         R"json([ { "id": 2, "value": 0 }, { "id": 4, "value": 2147483647 }, { "id": 5, "value": 16384 },)json"
-        R"json( { "id": 5, "value": 16777215 }, { "id": 6, "value": 4294967295 }, { "id": 0, "value": 7 },)json"
-        R"json( { "id": 8, "value": 2 }, { "id": 9, "value": 4294967295 }, { "id": 65535, "value": 0 } ])json";
+        R"json( { "id": 5, "value": 16777215 }, { "id": 3, "value": 4294967295 }, { "id": 0, "value": 7 },)json"
+        R"json( { "id": 8, "value": 2 }, { "id": 9, "value": 4294967295 }, { "id": 65535, "value": 0 },)json"
+        R"json( { "id": 1, "value": 65536 }, { "id": 6, "value": 262144 } ])json";
 
     const auto loaded = requireLoads( settings );
 
-    UTF_REQUIRE_EQUAL( loaded.http2.settings.size(), 9U );
+    UTF_REQUIRE_EQUAL( loaded.http2.settings.size(), 11U );
     UTF_REQUIRE_EQUAL( loaded.http2.settings[ 1 ].value.value(), 2147483647U );
     UTF_REQUIRE_EQUAL( loaded.http2.settings[ 2 ].value.value(), 16384U );
     UTF_REQUIRE_EQUAL( loaded.http2.settings[ 3 ].value.value(), 16777215U );
+    UTF_REQUIRE_EQUAL( loaded.http2.settings[ 4 ].id.value(), 3U );
     UTF_REQUIRE_EQUAL( loaded.http2.settings[ 4 ].value.value(), 4294967295U );
     UTF_REQUIRE_EQUAL( loaded.http2.settings[ 5 ].id.value(), 0U );
     UTF_REQUIRE_EQUAL( loaded.http2.settings[ 6 ].id.value(), 8U );
     UTF_REQUIRE_EQUAL( loaded.http2.settings[ 6 ].value.value(), 2U );
     UTF_REQUIRE_EQUAL( loaded.http2.settings[ 8 ].id.value(), 65535U );
+    UTF_REQUIRE_EQUAL( loaded.http2.settings[ 9 ].id.value(), 1U );
+    UTF_REQUIRE_EQUAL( loaded.http2.settings[ 9 ].value.value(), 65536U );
+    UTF_REQUIRE_EQUAL( loaded.http2.settings[ 10 ].id.value(), 6U );
+    UTF_REQUIRE_EQUAL( loaded.http2.settings[ 10 ].value.value(), 262144U );
 
     const auto settingList = []( SAA_in const std::size_t count ) -> std::string
     {
