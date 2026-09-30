@@ -143,8 +143,9 @@ identify websites*.
    settings in that time.
 4. **Quit the browser completely**: close every window of this profile, or press Cmd-Q on a Mac. Leave
    the tool running.
-5. **Visit 2.** Start the browser again with the same command, so the same profile. Type the address
-   again, wait for **Capture complete**, then quit the browser.
+5. **Visit 2.** Start the browser again with the same command, so the same profile; for Safari, start it
+   and open a *New capture Window*. Type the address again, wait for **Capture complete**, then quit the
+   browser.
 6. In the tool's window, press **Ctrl-C**. It closes its connections gently, which takes up to five
    seconds, and prints its report.
 
@@ -187,8 +188,9 @@ example `edge-h2` and `edge-http1`, `firefox-h2` and `firefox-http1`, `safari-h2
 Zip the output folders - `chrome-h2`, `chrome-http1` and the rest - into one file per machine.
 Do **not** include `certs` or `profiles`.
 
-Each folder holds what your browser sent to this tool and nothing else:
-- its user agent;
+Each folder holds only what your browser sent to this tool. The parts of it that say anything about you
+are:
+- its user agent, which names the browser and operating system versions;
 - its preferred languages;
 - the two test cookies the tool set.
 
