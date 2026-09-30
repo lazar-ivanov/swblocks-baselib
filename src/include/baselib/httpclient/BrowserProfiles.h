@@ -109,10 +109,10 @@ namespace bl
          *     transfer-encoding, the framing; keep-alive, proxy-connection and upgrade, which
          *     RFC 9113 8.2.2 forbids and no browser sends by default
          *   - every list and every string bounded - the MAX_ constants below, each but the two
-         *     MAX_ADVERTISED_ ones and the three name sizes, which are OpenSSL's own, a generous
-         *     multiple of what a browser sends, because the point is a finite ceiling rather than
-         *     a tight fit; each checked before any other work on what it bounds; and no list
-         *     repeats an element where a repeat has no meaning on the wire
+         *     MAX_ADVERTISED_ ones and the three name sizes, which follow OpenSSL's own limits, a
+         *     generous multiple of what a browser sends, because the point is a finite ceiling
+         *     rather than a tight fit; each checked before any other work on what it bounds; and
+         *     no list repeats an element where a repeat has no meaning on the wire
          *
          * THE VERSION STRINGS (6.2). userAgent, secChUaBrands and platform change every few weeks
          * while the shape changes a few times a year, and a refresh must be an edit of those three
@@ -196,13 +196,13 @@ namespace bl
                 MAX_SEC_CH_UA_BRANDS                    = 8U,
 
                 /*
-                 * The strings. The three name bounds are OpenSSL 3.5's own: a longer group name is
-                 * a syntax error to it (ssl/t1_lib.c, GROUP_NAME_BUFFER_LENGTH) and a longer
-                 * signature algorithm name an error (TLS_MAX_SIGSTRING_LEN), while it skips a TLS
-                 * 1.3 suite name of 80 bytes or more without a word (ssl/ssl_ciph.c) - refused here
-                 * instead, each at its path. The rest are generous multiples of what a browser
-                 * sends; a composed value, sec-ch-ua or sec-ch-ua-platform, is held to the header
-                 * value bound too
+                 * The strings. The group and signature algorithm name bounds are OpenSSL 3.5's own:
+                 * a longer group name is a syntax error to it (ssl/t1_lib.c, GROUP_NAME_BUFFER_LENGTH)
+                 * and a longer signature algorithm name an error (TLS_MAX_SIGSTRING_LEN). The suite
+                 * name bound sits below the 80 bytes at which it skips a TLS 1.3 suite name without a
+                 * word (ssl/ssl_ciph.c) - refused here instead, each at its path. The rest are generous
+                 * multiples of what a browser sends; a composed value, sec-ch-ua or
+                 * sec-ch-ua-platform, is held to the header value bound too
                  */
 
                 MAX_CIPHER_SUITE_NAME_SIZE              = 64U,

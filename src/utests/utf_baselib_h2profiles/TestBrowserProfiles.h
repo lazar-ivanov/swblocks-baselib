@@ -338,9 +338,12 @@ namespace utest
         /**
          * @brief The document is refused for its shape, and the message ends in the chain of
          * properties given - "for property 'weight' for property 'idleStreamPriorities' for property
-         * 'http2'" - which both JSON backends put last (json::rethrowWithContext( )), so that the
-         * refusal is attributed to the property it is about. The middle of the message is the
-         * backend's own and is not asserted
+         * 'http2'" - so that the refusal is attributed to the property it is about. Both JSON
+         * backends put the chain last: json::rethrowWithContext( ) at every enclosing level, and at
+         * the innermost it or, for a value of the wrong type, json::remapIncorrectValueTypeException( ),
+         * which on json-spirit adds the context only when the backend's message matches its pattern
+         * (core/detail/JsonSpiritImpl.h). The middle of the message is the backend's own and is not
+         * asserted
          */
 
         inline void requireShapeRefused(
@@ -2393,9 +2396,9 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_StringsAreBoundedTests )
 
     /*
      * Every string is bounded as every list is, refused at its path and accepted at its bound (the
-     * checkpoint review's P-2). The three name bounds are OpenSSL 3.5's own: a longer group or
-     * signature algorithm name is an error to it, and it skips a TLS 1.3 suite name of 80 bytes or
-     * more without a word. The rest are generous multiples of what a browser sends
+     * checkpoint review's P-2). The group and signature algorithm name bounds are OpenSSL 3.5's own:
+     * a longer name of either is an error to it. The suite name bound sits below the 80 bytes at which
+     * it skips a TLS 1.3 suite name without a word. The rest are generous multiples of what a browser sends
      */
 
     const ProfileDocument document;
