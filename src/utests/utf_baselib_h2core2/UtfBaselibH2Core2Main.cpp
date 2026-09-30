@@ -27,17 +27,17 @@
  *
  * WHY THIS MODULE EXISTS, and it is the size policy. The fingerprint's cases need the protocol
  * core and a Session, which utf_baselib_h2core compiles already, but that module is past the
- * 40 MB target - 46.8 MB at a64 gcc debug - and takes no further cases
+ * 40 MB target - 44.6 MB (46,771,144 bytes) at a64 gcc debug - and takes no further cases
  *
  * WHAT THIS MODULE PAYS FOR, beyond the harness every module compiles (UtfMain.h, which brings
  * OpenSSL and the TLS stream wrapper): the sans-I/O protocol core - the frame codec, HPACK, and
  * the Session engine which two of the cases drive - and the fingerprint over it. No socket, no
  * driver and no OpenSSL code of its own
  *
- * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 22.9 MB clang debug (a64) with its
- * ten cases, when L7-D built it. Its x86 size is the Windows section's to measure; an a64-to-x86
- * estimate by the measured 1.15 to 1.25 puts it at about 26 to 29 MB - inferred, not measured.
- * Under the 40 MB target, so the module has room for further cases of the protocol core
+ * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 22.9 MB clang debug (a64),
+ * 24,009,840 bytes at 8061a3e, with its ten cases. Its x86 size is the Windows section's to
+ * measure; an a64-to-x86 estimate by the measured 1.15 to 1.25 puts it at 26.3 to 28.6 MB -
+ * inferred, not measured. Under the 40 MB target: room for further cases of the protocol core
  *
  * The module is devenv7+ only, as utf_baselib_h2core is: the devenv7_only marker next to this
  * file is what keeps it out of the build on devenv2-6 (projects/make/common.mk). Headers never
