@@ -607,7 +607,8 @@ rule is now in `AGENTS.md` v2.15, "Fold what the implementation finds" (`ea7e414
 - **CS-5** (lane 2): I3, one TLS test peer per role.
 - **CS-6** (lane 3): I13 and I2, the core pair, gated on the whole suite.
 - I7 and I9 were already done.
-- Nothing from the run stays owed except the Windows matrix run, which needs another host.
+- Nothing from the run stays owed except the Windows matrix run, which needs another host. *(Run
+  2026-09-29 at `edd921b`: `astra-remediation-owed-work.md` W10 to W20.)*
 
 **Asked and decided during the fold-in, 2026-09-27, as the rule now requires:**
 
@@ -618,7 +619,10 @@ rule is now in `AGENTS.md` v2.15, "Fold what the implementation finds" (`ea7e414
 | **A forced cancel can be lost between two steps of a TLS handshake (D-L3-1).** CS-6's lane found it while characterizing I13. `cancel( )` reaps only the operations registered at that instant. If a cancel lands between the ClientHello's write and the ServerHello's read, the next step arms a read on a socket whose receive side is open. Every later cancel is then a no-op, because `requestCancelInternal( )` is idempotent — and the protocol timer and the connect deadline cancel through it. Against a silent peer the task never ends. It is pre-existing, and reproduced deterministically: 3 of 3 on the stranded TLS policy | **Folded into CS-6 now**, the core change-set already open on the forced-cancel path, sharing its whole-suite gate. A design note comes first. Its shape — the lane's candidates are re-issuing the socket cancel from deadlines, a handshake bound, a receive-side shutdown during the handshake, or a close on the strand — is put to the maintainer with evidence before any code |
 
 **CS-6 owes the Windows matrix.** I13, I2 and D-L3-1 all change transport teardown — `AGENTS.md`'s
-networking rule — and it is handed off with the rest of this review's Windows items.
+networking rule — and it is handed off with the rest of this review's Windows items. *(Run 2026-09-29
+and settled: every CS-6 case passes on x86 and x64; D-L3-1's gap is real on IOCP and the fix closes
+it; I2's hang is epoll's. The measurements are under §6 of `astra2-cs6-lost-forced-cancel-design.md`
+and in §1 and §5 of `astra2-cs6-tls-shutdown-after-truncation-design.md`; the owed list's W10.)*
 
 **D-L3-1's shape, decided by the maintainer 2026-09-28: (c) + (a2) limited to four deadlines + the
 retry guard.** The maintainer asked for the regression analysis of (a2) and for the decision in full
@@ -626,6 +630,8 @@ before choosing.
 - **(c):** while a TLS task's own handshake is incomplete, a forced cancel also shuts the receive side,
   so the next step's read ends at once. Measured on Linux: 1–2 ms, where today it hangs. It never
   applies to a connection attached after its handshake. Its Windows premise is owed to the matrix.
+  *(Measured 2026-09-29: it holds - a `WSARecv` started after `SD_RECEIVE` completes at once, and the
+  cancelled handshake fails `WSAESHUTDOWN`, which does not reach the retry path. The design note's §6.)*
 - **(a2), on four deadlines:** the TLS protocol timer, the HTTP connect deadline, and the HTTP server's
   idle and response timers. Through one additive `TaskBase` helper, each re-issues the socket cancel
   when it fires on a task that is running and already cancelled — a state which does nothing today.
@@ -664,8 +670,8 @@ recommended:**
 | **D2 — `SimpleHttpSslTask`'s handshake has no deadline at all** (the note's review, F11). Its request timer is armed only after the handshake, so a server which accepts TCP and never answers holds it. No cancel is involved. Pre-existing | **Fold into CS-6.** `SimpleHttpTask` arms its own request timer before the handshake, so the request timeout covers it. `SimpleHttpTask.h` joins CS-6 |
 | **D3 — on the plain policies, a forced cancel races asio's ranged connect** (the note's review, F10). The connect closes and re-opens the same socket on an I/O thread, under no lock of ours. Pre-existing, I13's class; not measured | **Characterize it in CS-6**, under ThreadSanitizer. The fix's shape comes back to the maintainer on the report |
 | **D3's fix** (lane 3's report, `logs/astra2/cs6/d3-rangedconnect/REPORT.txt`). ThreadSanitizer confirmed the race on both plain policies, four reports: the cancel reads the socket's descriptor and its reactor data while the ranged connect re-opens the socket. It also showed that a cancel landing during a multi-address connect does not stop it: the connect moves to the next address, and the cancel waits for that attempt | **Our own per-endpoint loop, in CS-6.** It replaces `asio::async_connect( )` in the connector and in the proxy tunnel's connect. Each attempt starts from a task handler under the task lock, and a cancel is checked between endpoints. So the switch is ordered with the cancel, and a cancel ends a multi-address connect at once. It is the universal connect path: the design section is reviewed before code, a ThreadSanitizer case gives the red and green, and the whole-suite gate covers it. Rejected: skipping the socket calls while connecting, which would make every cancel during a connect wait for it to finish |
-| **D-A — the connect loop when a socket cannot be opened** (CS-6's checkpoint review, F2; asked again at the maintainer's request with the full detail). Before each address, a socket is opened for its family. The open can fail: the process is out of file descriptors, or the host cannot open the family. asio's ranged connect then finds the socket closed and ends the whole connect with "Operation canceled", which the task handlers treat as expected and do not log, and it never tries the remaining addresses. That is a cancel reported for a task nobody cancelled. The loop CS-6 wrote treats the attempt like any failed one: it tries the next address, and after the last it reports the real error. The agreed note had called asio's branch unreachable | **Keep the loop's behaviour, record it, and test it.** The loop decides "cancelled" from the task's own state, never from the socket's. The code comment, the note's dated correction and this entry record the difference from asio. A deterministic test pins it: a lowered file-descriptor limit makes the open fail inside the connector's own locked handler. It is POSIX only. Windows has no small per-process handle limit to exhaust, and nothing can make the open fail there without a seam, so the Windows run records the case's skip and nothing more. Not taken: mirroring asio, which would re-create the misreport; and stopping early on descriptor exhaustion, a new predicate for little gain |
-| **D-B — five new test modules estimated at or over the 40 MB x86 target** (CS-6's checkpoint review, F3). By the ratios recorded, they are about 40–44 MB on win-x86 debug: `tasks3`, `http3`, `h2client9`, `h2client10` and `httpclient13`, at 36.1–37.6 MB a64 clang debug | **Accept, and record the reasons now.** Each `Main.cpp` records its size, the inferred x86 figure and why, and the Windows matrix measures the real figures. It reverses to splitting the three splittable modules if any measures above about 45 MB x86 debug. The two HTTP/2 driver modules cannot be split smaller: one case costs about 37.5 MB there. *(2026-09-29: those a64 figures are 10^6 bytes. In the 2^20 unit of `src/utests/AGENTS.md` they are 34.4–35.9 MB, about 39–42 MB on x86 by row 5c's one-unit ratio. The modules' `Main.cpp` files now say so; `logs/astra4/cs9/sizes-units.txt`.)* |
+| **D-A — the connect loop when a socket cannot be opened** (CS-6's checkpoint review, F2; asked again at the maintainer's request with the full detail). Before each address, a socket is opened for its family. The open can fail: the process is out of file descriptors, or the host cannot open the family. asio's ranged connect then finds the socket closed and ends the whole connect with "Operation canceled", which the task handlers treat as expected and do not log, and it never tries the remaining addresses. That is a cancel reported for a task nobody cancelled. The loop CS-6 wrote treats the attempt like any failed one: it tries the next address, and after the last it reports the real error. The agreed note had called asio's branch unreachable | **Keep the loop's behaviour, record it, and test it.** The loop decides "cancelled" from the task's own state, never from the socket's. The code comment, the note's dated correction and this entry record the difference from asio. A deterministic test pins it: a lowered file-descriptor limit makes the open fail inside the connector's own locked handler. It is POSIX only. Windows has no small per-process handle limit to exhaust, and nothing can make the open fail there without a seam, so the Windows run records the case's skip and nothing more. Not taken: mirroring asio, which would re-create the misreport; and stopping early on descriptor exhaustion, a new predicate for little gain. *(Windows, 2026-09-29: both `TcpConnectOpenFailure_*` cases skip there, as designed.)* |
+| **D-B — five new test modules estimated at or over the 40 MB x86 target** (CS-6's checkpoint review, F3). By the ratios recorded, they are about 40–44 MB on win-x86 debug: `tasks3`, `http3`, `h2client9`, `h2client10` and `httpclient13`, at 36.1–37.6 MB a64 clang debug | **Accept, and record the reasons now.** Each `Main.cpp` records its size, the inferred x86 figure and why, and the Windows matrix measures the real figures. It reverses to splitting the three splittable modules if any measures above about 45 MB x86 debug. The two HTTP/2 driver modules cannot be split smaller: one case costs about 37.5 MB there. *(2026-09-29: those a64 figures are 10^6 bytes. In the 2^20 unit of `src/utests/AGENTS.md` they are 34.4–35.9 MB, about 39–42 MB on x86 by row 5c's one-unit ratio. The modules' `Main.cpp` files now say so; `logs/astra4/cs9/sizes-units.txt`.)* *(Measured on Windows 2026-09-29, `win-x86-vc143-debug` and `ccl16`: `tasks3` 44.0 and 43.8 MB, `httpclient13` 42.8 and 42.9, `http3` 41.8 and 42.2, `h2client9` 41.3 and 41.4, `h2client10` 41.4 and 41.6. None is above about 45 MB, so D-B stands; the x86 figures ran 1.15 to 1.25 times the 2^20 a64 ones, above row 5c's 1.13 to 1.17.)* |
 
 ## 10. The change-sets, as they landed
 
@@ -712,7 +718,8 @@ is kept outside the repository on purpose, as session machinery, so this one is
 `logs/astra2/` from the checkout.)*
 
 **New module:** `utf_baselib_h2client8`, 35.4 MB at a64 clang debug, with its reason in its `Main.cpp`.
-Its x86 size is owed to the Windows handoff.
+Its x86 size is owed to the Windows handoff. *(Measured 2026-09-29: 37.8 MB at `win-x86-vc143-debug`,
+38.0 at `ccl16`; it passes 5 of 5 on both arches.)*
 
 ### CS-1 — D1 and D2 — ready 2026-09-27, with the Windows matrix owed
 
@@ -778,11 +785,16 @@ The logs are in `logs/astra2/gate/cs1/`.
 - `…12`, 35.6 MB.
 
 The re-pin grew `…5` by 9,088 bytes. The x86 sizes are owed to the Windows handoff: `…8` and `…12` are
-estimated at about 41 and 39.7 MB there, from `…7`'s ratio.
+estimated at about 41 and 39.7 MB there, from `…7`'s ratio. *(Measured 2026-09-29, `win-x86-vc143-debug`
+and `ccl16`: `…8` 41.6 and 41.4 MB, `…11` 35.8 and 35.8, `…12` 40.7 and 40.4, `…5` 55.5 and 56.3.)*
 
 **Owed: the Windows matrix**, because D1 changes how a TLS ending is classified and D2 changes the
 order of the first I/O on every HTTP/1.1 connection. It is handed off in `windows-matrix-handoff.md`,
-"astra's second review", and CS-1 is ready without waiting for it, as decided at set-up.
+"astra's second review", and CS-1 is ready without waiting for it, as decided at set-up. *(Run
+2026-09-29 and settled: `…8` 4 of 4 on x86 and x64, the recorded ending as asserted; `…5` 8 of 8;
+`…11`, `…12`, `…7` and `…3` whole. `…3`'s `Http1Driver_RequestResponseAndKeepAliveReuseTests` went
+red once, in the gate, with a cause tier 3 did not keep, and passed 10 of 10 re-run under the same
+load. The owed list's W10 and W16.)*
 
 ### CS-2 — D3, D4, D5, E1–E4, and the pool's double charge — ready 2026-09-27
 
@@ -830,7 +842,13 @@ The logs are in `logs/astra2/gate/cs2/`.
   first case, because the session instantiation is the cost.
 - `utf_baselib_httpclient` grew to 34.5 MB.
 
-Their x86 sizes are owed to the Windows handoff, and so is E2's platform premise.
+Their x86 sizes are owed to the Windows handoff, and so is E2's platform premise. *(Measured
+2026-09-29, `win-x86-vc143-debug` and `ccl16`: `…9` 44.4 and 44.7 MB, `…10` 54.6 and 55.3,
+`utf_baselib_httpclient` 39.1 and 39.8. E2's premise is not Windows' either way: Winsock refuses a SYN
+to a full queue, but only after about 2 s, so the pool's 200 ms bound abandons the attempt there too,
+and the Linux-only count held 50 of 50 with its guard lifted; D3's stalled sink raced the drain's hop
+in 3 runs of 40. Both were decided by the maintainer 2026-09-29, as recommended, and are done - the
+owed list's W12 and W13.)*
 
 ### B6 — one ThreadSanitizer pass over the client modules — done 2026-09-27
 
@@ -878,7 +896,9 @@ were measured per module; the largest change is `httpclient10`'s +20.6 KB.
 **Reviewed by an Opus reviewer.** Round 1 was READY WITH CHANGES, all folded, and the review closed
 with no open finding.
 
-**Owed:** the x86 debug sizes of `httpclient5` and `httpclient10`, in the Windows handoff.
+**Owed:** the x86 debug sizes of `httpclient5` and `httpclient10`, in the Windows handoff. *(Measured
+2026-09-29: 55.5 and 54.6 MB at `win-x86-vc143-debug`, 56.3 and 55.3 at `ccl16` - over the 40 MB
+target, as their reasons say, and under the 75 MB ceiling.)*
 
 ### CS-4 — I1, I4, I5, I6, I8, I10, I11 and I12 — merged 2026-09-28, gated with CS-5 and CS-6
 
@@ -981,7 +1001,10 @@ before the loop, and none after it.
 `Main.cpp` now records; `logs/astra4/cs9/sizes-units.txt`.)*
 
 **Owed:**
-- the Windows matrix, in the handoff;
+- the Windows matrix, in the handoff; *(run 2026-09-29 and settled - the owed list's W10: the six new
+  modules pass whole on x86 and x64, and at `win-x86-vc143-debug` and `ccl16` they measure `tasks3`
+  44.0 and 43.8 MB, `tasks4` 37.2 and 36.9, `http3` 41.8 and 42.2, `httpclient13` 42.8 and 42.9,
+  `h2client9` 41.3 and 41.4, `h2client10` 41.4 and 41.6)*
 - a compile of the Boost guard's pre-1.72 branch on a devenv2 or devenv3 host, the only devenvs below
   1.72.
 

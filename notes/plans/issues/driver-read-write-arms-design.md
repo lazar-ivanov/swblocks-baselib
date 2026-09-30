@@ -517,7 +517,9 @@ second gate.
   red must establish it on both platforms; if it does not hold, (ii) is wrong and §2.2's (i) is the
   fallback. **Measured on Linux 2026-09-23 and held in the letter, §12.3: the read is always told —
   as `connection_reset` when it reached the reset first, as `eof` when the write did — and what that
-  `eof` means is §12.5's finding. (ii) stands; Windows still owed.**
+  `eof` means is §12.5's finding. (ii) stands; Windows still owed.** *(Measured on Windows
+  2026-09-24: the read took a reset spelling itself, 15 of 15, never `eof` - §13.3. Pointer added
+  2026-09-29 by the next Windows round's sweep.)*
 - **A3's residual at `postCommand( )`** (§11.3): giving back the last operation of a closing task
   leaves the terminal untaken. Derived from the source, not observed; a control needs a
   fault-injecting allocator and a racing completion. A decision is owed at the merge.
@@ -1404,7 +1406,8 @@ or a FIN preceded it, or the pipe is ours.
 pending read is always told; the code is `connection_reset` when the read reached the reset first and
 `eof` when the write did. Windows is still owed to the matrix, where the question is the opposite one —
 whether the read there ever sees `eof` for a reset at all; the peer-close record says it sees the
-reset spellings.
+reset spellings. *(Answered on Windows 2026-09-24: never - the read took a reset spelling itself, 15
+of 15; §13.3. Pointer added 2026-09-29.)*
 
 ### 12.4 Finding 2: §10.1 overstated the outcome; (ii) still stands
 

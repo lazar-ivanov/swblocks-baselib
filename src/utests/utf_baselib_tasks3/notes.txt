@@ -11,7 +11,8 @@
 # cases are the endings the fix must NOT change, and are green on both sides of it: the peer's
 # close_notify, and our own close_notify answered at once or only once the peer releases it.
 # TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests is I2's red: red before the fix, green after.
-# TlsShutdown_ATruncationThenACloseEndsCleanTests is green before and after on Linux (see its header).
+# TlsShutdown_ATruncationThenACloseEndsCleanTests is green before and after on Linux, and on Windows
+# red before the fix and green after - measured 2026-09-29 (see its header).
 # TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests pins the fix's new record: clear on a fresh
 # stream, set once recorded, and cleared by a new handshake.
 

@@ -40,6 +40,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 /*
@@ -441,6 +442,10 @@ namespace utest
 
             /**
              * @brief Closes the connection once everything already queued has been written
+             *
+             * The client sees the end at once, as our FIN; over a bare socket the socket itself is
+             * closed only once the client has closed too - see
+             * Http2TestConnectionT::closeWhenDrained( )
              */
 
             this_type& closeConnection()
@@ -767,6 +772,7 @@ namespace utest
             enum : std::size_t
             {
                 READ_BUFFER_SIZE = 16U * 1024U,
+                LINGER_BOUND_IN_MILLISECONDS = 5000U,
             };
 
         protected:
@@ -807,9 +813,17 @@ namespace utest
             std::map< std::uint32_t, StreamScript >                             m_scripts;
 
             bl::cpp::SafeUniquePtr< bl::asio::deadline_timer >                  m_openingTimer;
+            bl::cpp::SafeUniquePtr< bl::asio::deadline_timer >                  m_lingerTimer;
 
             bool                                                                m_isWriteInFlight = false;
             bool                                                                m_isCloseWhenDrained = false;
+
+            /*
+             * Set once the send side is shut down for a lingering close - see closeWhenDrained( ).
+             * From then on nothing is written, and what is read is discarded
+             */
+
+            bool                                                                m_isLingering = false;
 
             /*
              * Nothing is written until the opening delay has passed. Without this the delay would
@@ -884,7 +898,7 @@ namespace utest
             {
                 using namespace bl;
 
-                if( m_isWriteInFlight || ! m_isWriteAllowed || base_type::isClosing() )
+                if( m_isWriteInFlight || ! m_isWriteAllowed || m_isLingering || base_type::isClosing() )
                 {
                     return;
                 }
@@ -895,7 +909,7 @@ namespace utest
                     {
                         record( "closed the connection" );
 
-                        base_type::beginClose();
+                        closeWhenDrained();
                     }
 
                     return;
@@ -955,6 +969,74 @@ namespace utest
                 advanceScripts();
 
                 pumpWrites();
+
+                BL_TASKS_HANDLER_END_MULTIOP()
+            }
+
+            /**
+             * @brief Ends the connection once everything queued has been written - over a bare
+             * socket by a lingering close, which is what keeps the client's copy of the response
+             *
+             * NOT AT ONCE, BECAUSE THE CLIENT IS STILL TALKING (the owed list's W11). An HTTP/2
+             * client answers our SETTINGS with an ACK and may credit a window, and a segment which
+             * reaches a socket already closed is answered with a reset. On Windows a reset discards
+             * whatever the client has not yet read - the response too, though it preceded our FIN:
+             * measured at the socket, 40 of 40, and as utf_baselib_h2client2 red with status( ) 0,
+             * 12 runs of 36 on x86 under load. So over a bare socket the send side is shut down -
+             * the FIN, which the client reads as the end - and the socket is read, and what arrives
+             * discarded, until the client closes too or LINGER_BOUND_IN_MILLISECONDS passes; only
+             * then does the connection close
+             *
+             * DISCARDED AND NOT FED, because as far as the script is concerned the session is over:
+             * a client's closing GOAWAY fed to it would add records after "closed the connection",
+             * where no case expects any
+             *
+             * AND NOT OVER TLS, where the stream's close on finish is a TLS shutdown - our
+             * close_notify, then a wait for the client's - which reads, and so lingers, already. A
+             * half-close under it would refuse that close_notify its write
+             */
+
+            void closeWhenDrained()
+            {
+                using namespace bl;
+
+                if( ! std::is_same< typename STREAM::stream_t, typename STREAM::socket_t >::value )
+                {
+                    base_type::beginClose();
+
+                    return;
+                }
+
+                m_isLingering = true;
+
+                {
+                    eh::error_code ec;
+
+                    base_type::getSocket().shutdown( asio::ip::tcp::socket::shutdown_send, ec );
+                }
+
+                m_lingerTimer = makeTimer();
+
+                m_lingerTimer -> expires_from_now(
+                    time::milliseconds( static_cast< long >( LINGER_BOUND_IN_MILLISECONDS ) )
+                    );
+
+                base_type::beginOperation();
+
+                m_lingerTimer -> async_wait(
+                    cpp::bind(
+                        &this_type::onLingerExpired,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        asio::placeholders::error
+                        )
+                    );
+            }
+
+            void onLingerExpired( SAA_in const bl::eh::error_code& ec ) NOEXCEPT
+            {
+                BL_TASKS_HANDLER_BEGIN_CHK_EC()
+
+                base_type::beginClose();
 
                 BL_TASKS_HANDLER_END_MULTIOP()
             }
@@ -1019,7 +1101,15 @@ namespace utest
                 {
                     if( isPeerClosed( ec ) )
                     {
-                        record( "the client closed the connection" );
+                        /*
+                         * During a linger the client's close is what the linger waits for, and it
+                         * is not recorded: nothing after "closed the connection" is
+                         */
+
+                        if( ! m_isLingering )
+                        {
+                            record( "the client closed the connection" );
+                        }
 
                         base_type::beginClose();
                     }
@@ -1027,6 +1117,15 @@ namespace utest
                     {
                         BL_TASKS_HANDLER_CHK_EC( ec );
                     }
+                }
+                else if( m_isLingering )
+                {
+                    /*
+                     * Read only so that nothing is left unread when the socket closes - see
+                     * closeWhenDrained( )
+                     */
+
+                    scheduleRead();
                 }
                 else
                 {
@@ -1657,9 +1756,18 @@ namespace utest
 
                     ++it -> second.nextStep;
 
-                    advanceOne( streamId, it -> second );
+                    /*
+                     * AND NOT ADVANCED DURING A LINGER: once "closed the connection" is recorded the
+                     * session is over, and a step advanced here would record after it - see
+                     * closeWhenDrained( ). Before the linger the close cancelled this timer instead
+                     */
 
-                    pumpWrites();
+                    if( ! m_isLingering )
+                    {
+                        advanceOne( streamId, it -> second );
+
+                        pumpWrites();
+                    }
                 }
 
                 BL_TASKS_HANDLER_END_MULTIOP()
@@ -1747,6 +1855,11 @@ namespace utest
                 if( m_openingTimer )
                 {
                     m_openingTimer -> cancel( ec );
+                }
+
+                if( m_lingerTimer )
+                {
+                    m_lingerTimer -> cancel( ec );
                 }
 
                 for( auto it = m_scripts.begin(); it != m_scripts.end(); ++it )

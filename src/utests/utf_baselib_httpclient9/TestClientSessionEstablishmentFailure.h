@@ -55,8 +55,11 @@
  * neither completes nor fails - it hangs until the pool's bound expires. Deterministic, unlike a port
  * just released, which another process can take between two calls. MEASURED ON LINUX before the
  * case was written: the second connect to such a listener timed out on the client's own clock.
- * Winsock answers a full queue with a reset instead, so there the attempt is refused rather than
- * abandoned - which is why the one assertion that names the bound is Linux's alone.
+ * MEASURED ON WINDOWS, 2026-09-29: Winsock answers such a SYN with a reset rather than dropping it,
+ * but its client retries twice and reports the refusal only after about two seconds - ten times the
+ * bound here - so there too the attempt is abandoned rather than refused, 50 runs of 50. The one
+ * assertion that names the bound is therefore held to these two platforms, and to no other until
+ * one is measured
  *
  * WHY HTTP/2 BY PRIOR KNOWLEDGE. The chained cause belongs to the DISPATCHED path: only a request
  * which rode the preface is bounced by the connection task and so can be told the task's failure. A
@@ -329,11 +332,12 @@ UTF_AUTO_TEST_CASE( ClientSession_AnOriginWhichNeverAcceptsFailsWithTheConnectio
     UTF_REQUIRE_EQUAL( stats.released.value(), 2U );
     UTF_REQUIRE_EQUAL( stats.connectionsRetired.value(), 2U );
 
-#if defined( __linux__ )
+#if defined( __linux__ ) || defined( _WIN32 )
 
     /*
      * AND EACH WAS ABANDONED BY THE BOUND, which is what makes the tasks the pool retired CANCELLED
-     * ones. Linux only: see the header - a full queue drops the SYN here, where Winsock resets it
+     * ones. On the two platforms where that is measured: see the header - a full queue drops the SYN
+     * on Linux, and on Windows the refusal comes only after the bound
      */
 
     UTF_REQUIRE_EQUAL( stats.establishmentTimeouts.value(), 2U );

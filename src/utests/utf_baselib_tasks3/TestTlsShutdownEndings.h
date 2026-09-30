@@ -80,9 +80,11 @@
  *     after a reset arrives - the error is only left pending (measured, logs/astra2/cs6/
  *     c2-reset-after-fin-probe.txt in the run's state directory) - so today's shutdown reads a
  *     truncation, which the policy counts as expected, and ends clean. Where the reset does reach
- *     the read - INFERRED possible on Windows, not measured - today's probe that swallows the ending
- *     fails with it, and the fix, which reads nothing, makes it clean. The probe that fails with the
- *     code keeps its truncation everywhere.
+ *     the read - on Windows, MEASURED 2026-09-29: the read gets 10053, and the case was red in 5 runs
+ *     of 5 before the fix and green in 5 of 5 after (logs/win-astra/before-fix/ and after-fix/ in the
+ *     run's state directory) - the probe that swallows the ending failed with it, and the fix, which
+ *     reads nothing, makes it clean. The probe that fails with the code keeps its truncation
+ *     everywhere.
  *
  * IN BOTH TRUNCATED ENDINGS THE PEER ENDS THE STREAM ONLY ONCE THE PROBE'S READ IS ARMED - registered
  * with the reactor, since nothing else arrives. The FIN's own event then completes that read, and no
@@ -855,12 +857,13 @@ UTF_AUTO_TEST_CASE( TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests )
 }
 
 /**
- * @brief A truncation followed by the peer's close ends the teardown clean, before the fix and after
+ * @brief A truncation followed by the peer's close ends the teardown clean - after the fix everywhere,
+ * and before it on Linux only
  *
  * The peer truncates and closes its socket at once, and our close_notify draws a reset. On Linux the
- * shutdown's read reports the end of stream the FIN left behind rather than the reset, so today's
- * teardown ends clean as well; after the fix it reads nothing. Where a platform hands the read the
- * reset instead, this case is the red that platform shows today
+ * shutdown's read reports the end of stream the FIN left behind rather than the reset, so the
+ * teardown ended clean before the fix as well; after the fix it reads nothing. Windows hands the read
+ * the reset instead - 10053, measured - so there this case was red before the fix: see the header
  */
 
 UTF_AUTO_TEST_CASE( TlsShutdown_ATruncationThenACloseEndsCleanTests )

@@ -354,6 +354,17 @@ blocks, so the cap bounds the task's memory and not only its payload. A fourth c
    before teardown, so a larger buffer or a lingering socket can fail only the short-write assertion.
    (Reverses if the green log shows the peer's write returning within the case without this ordering
    — then the ordering is a comment, not a requirement.)
+
+   **Corrected after the Windows measurement, 2026-09-29.** The short write rested on a third thing,
+   which this item did not name: that the cap's cancel lands before the peer has written the body. It
+   is as prompt as the drain (§3), and until it lands the read re-arms and `post( )` drops; with the
+   peer writing flat out, a loaded two-core Windows host read all 64 MiB before it landed in 3 runs of
+   40, while Windows' loopback takes only 0.4 to 0.6 MiB of a connection nobody reads, even after a
+   32 MiB flood. MEASURED: `http2-l0-state/logs/win-astra/RESULTS.md`, A6's stalled-sink section. So
+   the peer now writes twice the cap, holds until the case has seen the request fail, and only then
+   writes on: the drain posts the cancel before it tells the caller, so what follows meets a stopped
+   read loop, and the short write rests on the two things above alone. The red before D3 is
+   unchanged, reached after the hold's thirty-second bound.
 3. **The control** (`utf_baselib_httpclient9`). A sink which takes everything, a 1 MiB body, and a cap
    of 64 KiB. The peer writes 16 KiB pieces and sends each only after the sink's own tally shows the
    last one taken, so the backlog never exceeds one piece. The script's wait on that tally is bounded
@@ -408,14 +419,15 @@ compile-only probe of the header.
 **Inferred:** that each driver honours "closed is last" in full (the contract says so; that no `Data`
 follows a `Closed` is verified at both drivers); the allocator
 constant, 64, which is an estimate of two allocations' headers and rounding and not a measurement;
-and that a 64 MiB body cannot fit the socket buffers on every platform.
+and that a 64 MiB body cannot fit the socket buffers on every platform - since measured on Windows,
+2026-09-29: 0.4 to 0.6 MiB (§8, case 2's correction).
 
 **To be shown when coded** (the review's §5 item 9): a grep that no `Data` producer other than
 `onData( )` and no consumer of `m_pendingDownload` other than the ones §2 names exists at the tip,
 since the count's invariant depends on it.
 
-**Not checked:** Windows and macOS socket buffer ceilings; any caller which relies today on more than
-64 MiB of HTTP/1.1 backlog.
+**Not checked:** macOS socket buffer ceilings (Windows' measured since - §8, case 2); any caller which
+relies today on more than 64 MiB of HTTP/1.1 backlog.
 
 ---
 

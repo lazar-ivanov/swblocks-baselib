@@ -92,6 +92,17 @@ namespace utest
             bool                                                                isCancelRequested;
             bool                                                                isCompleted;
 
+            /*
+             * A CANCEL OR A COMPLETION WHICH ARRIVES BEFORE THE TASK IS SCHEDULED has no callback to
+             * go to yet, and used to be dropped: the task then never ended, a case which waited for
+             * it failed, and the pool's dispose( ) waited on it for good - the owed list's W18, red
+             * and hung on Windows through tier 3's runner. Each is remembered here instead, and
+             * onScheduled( ) delivers it
+             */
+
+            bool                                                                isCancelPending;
+            bool                                                                isCompletionPending;
+
             /**
              * When set, the task completes with this error as soon as it is scheduled - a
              * connection attempt which fails before it could carry anything
@@ -103,7 +114,9 @@ namespace utest
                 :
                 isScheduled( false ),
                 isCancelRequested( false ),
-                isCompleted( false )
+                isCompleted( false ),
+                isCancelPending( false ),
+                isCompletionPending( false )
             {
             }
 
@@ -126,6 +139,9 @@ namespace utest
             {
                 std::string failure;
 
+                bool isCancelledEarly = false;
+                bool isCompletedEarly = false;
+
                 {
                     BL_MUTEX_GUARD( lock );
 
@@ -134,7 +150,38 @@ namespace utest
 
                     failure = failWith;
 
+                    isCancelledEarly = isCancelPending;
+                    isCompletedEarly = isCompletionPending;
+
+                    isCancelPending = false;
+                    isCompletionPending = false;
+
                     cv.notify_all();
+                }
+
+                if( failure.empty() && isCancelledEarly )
+                {
+                    /*
+                     * Named first, for the reason given below
+                     */
+
+                    const auto eptr = std::make_exception_ptr(
+                        BL_EXCEPTION(
+                            bl::UnexpectedException(),
+                            std::string( "the stub connection task was cancelled" )
+                            )
+                        );
+
+                    completeLater( callback, eptr );
+
+                    return;
+                }
+
+                if( failure.empty() && isCompletedEarly )
+                {
+                    completeLater( callback, nullptr );
+
+                    return;
                 }
 
                 if( ! failure.empty() )
@@ -168,6 +215,11 @@ namespace utest
                     isCancelRequested = true;
 
                     callback = onReady;
+
+                    if( ! isScheduled )
+                    {
+                        isCancelPending = true;
+                    }
 
                     cv.notify_all();
                 }
@@ -204,6 +256,11 @@ namespace utest
 
                     callback = onReady;
                     isCompleted = true;
+
+                    if( ! isScheduled )
+                    {
+                        isCompletionPending = true;
+                    }
                 }
 
                 if( callback )

@@ -393,6 +393,40 @@ This is the Windows matrix owed for CS-6.
    Before that, measure whether a full accept queue drops a SYN on Windows, or answers it with a reset
    (**NOT VERIFIED**). If it resets, the red is Linux-only there.
 
+**MEASURED ON WINDOWS, 2026-09-29**, at `edd921b`: the before-and-after runs on `win-x64-vc143-debug`, the
+modules whole on `win-x86-` and `win-x64-vc143-debug`, and the probes through IOCP (asyncio's proactor
+loop: an overlapped `WSARecv` / `WSASend`, as asio issues them). Every file is in
+`http2-l0-state/logs/win-astra/`, and its `RESULTS.md` names each one.
+
+1. **The gap is real on IOCP, and the fix closes it.** With the four fixes reverted in a throwaway tree
+   (`a5d9d9a`, `83721c3`, `a2ad828`, `fff158c`), each red was red 5 of 5 - W1 stranded and W1 plain with
+   "the task did not end within the bound after its cancel", W2 stranded with "the protocol timer did not
+   issue the TLS shutdown's lost cancel again", and the retry guard with "the connector restarted a
+   cancelled establishment"; at the tip each is green 5 of 5.
+2. **(c)'s premise holds.** A `WSARecv` started after `SD_RECEIVE` completes at once: end of stream with
+   nothing queued, `WSAECONNABORTED` (10053) with the peer's data queued - **not** `WSAESHUTDOWN`. One
+   already outstanding at `SD_RECEIVE` does not complete (still pending at 3 s). 20 runs a shape, IPv4
+   and IPv6 alike. The forced cancel shuts the receive side only after the cancel (§10), so a read
+   registered then is the cancel's to reap, and only a later one meets the shutdown - which ends at once.
+   §5's reversing condition is not met: (c) stands.
+3. **The peer is reset** - with or without our FIN out, and at once when its data was queued at
+   `SD_RECEIVE`. **The cancelled handshake fails with `WSAESHUTDOWN` (10058)**, nested under the task's
+   `operation_aborted`, in W1 stranded, W1 plain and the retry guard's case, 3 of 3 each (a temporary
+   instrument logging the chain). It is a WRITE's code: after the forced cancel's `SD_SEND` and then
+   `SD_RECEIVE`, a later `WSARecv` ends in end of stream and a later `WSASend` fails 10058, 20 of 20. It is
+   not end of stream, so it does not reach the retry path; the guard's red came from §7's orderly-close
+   peer, as this section required.
+4. **The four (a2) reds and the characterization pass**, on both arches: `tasks3`'s, `utf_baselib_h2client10`
+   3 of 3, and `utf_baselib_http3`'s two timer reds. The response timer's red can pass only if its 1 MB
+   write stayed blocked until the timer re-issued the cancel (`chkIssuedAgainByTheTimer`), so it did.
+5. **D2's red and controls pass** (`utf_baselib_http3`).
+6. **A full accept queue does not drop a SYN on Windows - it refuses it**: `WSAECONNREFUSED` (10061), 36 of
+   36 over backlogs 1, 2 and 5 and both families, after **2.0 s**, the client retrying twice before it
+   reports. So D3's red is certain on Linux only: on Windows an attempt completes inside the case's 5 s
+   bound, and its header now says so. The red and the loop's ordinary cases pass, and the socket closed
+   and re-opened for the second endpoint connects - which it could not unless asio's open re-associated
+   it with the IOCP. D-A's two open-failure cases skip, as designed.
+
 ## 7. Tests, and files
 
 - **Characterization first, green today and after:**

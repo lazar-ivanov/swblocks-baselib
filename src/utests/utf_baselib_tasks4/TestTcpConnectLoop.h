@@ -65,8 +65,11 @@
  *   - TcpConnectLoop_NoEndpointAcceptingFailsTheTaskTests - both refused: the task fails with the
  *     refusal.
  *
- * AND D3'S RED, committed before the fix, and certain - nothing is timed, because no attempt can
- * complete:
+ * AND D3'S RED, committed before the fix, and certain ON LINUX - nothing is timed, because no attempt
+ * can complete there. Winsock refuses a SYN to a full queue instead, and the client reports the
+ * refusal after its two retries, about two seconds in (measured 2026-09-29): inside the bound below,
+ * so on Windows an attempt does complete, the red is not certain by this argument, and it was not
+ * run before the fix there:
  *
  *   - TcpConnectLoop_ACancelDuringTheConnectEndsItPromptlyTests - two listeners whose accept queues
  *     are full, so every SYN is dropped, over the four policies. The cancel is requested in the
@@ -197,7 +200,9 @@ namespace utest
          * so that the kernel drops every further SYN and a connect to it stays in SYN_SENT
          *
          * The queue is filled the way Linux counts it: listen( 0 ) and one connection, which the
-         * kernel completes into the queue and nothing accepts
+         * kernel completes into the queue and nothing accepts. On Windows the kernel refuses a SYN
+         * to the full queue rather than dropping it, and the connect fails after about two seconds -
+         * see the header
          */
 
         class Listener

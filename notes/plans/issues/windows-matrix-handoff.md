@@ -11,6 +11,18 @@ was built for, and its baseline was refreshed there on 2026-09-25, over 28 modul
 in `astra-remediation-owed-work.md`'s Windows rows, 4 to 5c and W1 to W9, which is where to read
 them; the text below is kept as the instructions it was.
 
+**SECTIONS A TO D RUN ON WINDOWS 2026-09-29**, at `edd921b`, which contains `5db9ae8` and `f0890bd`.
+Every item is answered and settled, three of them through decisions the maintainer took on
+2026-09-29: the HTTP/2 test peer's close, whose reset destroyed a response on a loaded Windows host
+(`h2client2`); A6's stalled sink, whose short write raced the cap's cancel; and E2's Linux-only
+count, which holds on Windows too. The gate ran on its own platform three times, tiers 1 and 2
+passing throughout. Tier 3 was red on the first run for W11, W12 and one failure each of two other
+modules which then passed 10 of 10; on the second - the fixed tree - for a harness race in
+`h2client4`, found and fixed (W18), and one abort of `blobtransfer2`, not reproduced (W19); and on the
+third, with W18 fixed, every module exited clean and one case of `utf_baselib_tasks` went unseen, not
+reproduced. Every result is in `astra-remediation-owed-work.md`'s rows W10 to W20, which is where to
+read them; sections A to D below are kept as the instructions they were.
+
 Everything here was found on Linux and **cannot be settled there**. Two of the items are things a
 Linux run *provably* cannot reach — not "has not yet", but cannot. The rest are measurements this
 host has no way to take.

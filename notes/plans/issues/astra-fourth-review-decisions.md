@@ -3,7 +3,7 @@
 **Date:** 2026-09-29. **Status:** D1 taken by the maintainer on 2026-09-29: shape (a″), in which the
 connection publishes the value itself. **CS-9 landed 2026-09-29**, merged at `5db9ae8`, with its gate
 green (§3). Astra's fifth review found one defect in CS-9's test, V01, fixed by CS-10 (§4). Only the
-Windows matrix is owed.
+Windows matrix is owed. *(Run 2026-09-29 at `edd921b` and settled - see §4's "Owed".)*
 
 **The review:** [`http2-l0-l6-fourth-review-2026-09-28.md`](../http2-l0-l6-fourth-review-2026-09-28.md),
 of `045e889`.
@@ -202,6 +202,7 @@ The plan gives its files, tests and gate.
   - D1: run the module whole;
   - D2: its x86 debug size;
   - D3: whether it builds at x86 `ccl16` release.
+  - *(All three run 2026-09-29 and settled - §4's "Owed".)*
 - **The owed list was swept.** CS-9 closed no row and adds none.
 
 ## 4. Astra's fifth review — V01, a defect in CS-9's test, fixed by CS-10
@@ -228,3 +229,7 @@ The plan gives its files, tests and gate.
   - **Tier 1** is re-captured at `3f77e4e`. **The gate** is green on `3f77e4e`: `utf_baselib_h2client11`
     in clang release and gcc debug, 2 of 2, each raw log read.
 - **Owed:** nothing new. D1 to D3 of the Windows handoff stand, and D2 now gives both sizes.
+  *(Run 2026-09-29 at `edd921b`, containing `5db9ae8` and `f0890bd`, and settled: D1 -
+  `utf_baselib_h2client11` passes whole, 5 of 5, on x86 and x64; D2 - 43.6 MB at `win-x86-vc143-debug`
+  and 43.7 at `ccl16`, over the 40 MB target as its reason says and inside the 43 to 44 inferred; D3 -
+  it builds at `win-x86-ccl16-release`, rc 0, a 19.2 MB object. The owed list's W10.)*

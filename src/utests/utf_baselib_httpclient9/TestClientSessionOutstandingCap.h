@@ -200,6 +200,17 @@ namespace utest
  * refuse - and the peer wrote all of it. GREEN AFTER: BufferTooSmallException naming the cap, the
  * sink took nothing, and the peer could not write the whole body.
  *
+ * THE PEER IS HELD AT TWICE THE CAP UNTIL THE CASE HAS SEEN THE REQUEST FAIL - measured on Windows,
+ * 2026-09-29. The cap's cancel is as prompt as the drain ( the design's section 3 ), and until it
+ * lands the driver goes on reading and dropping - so a peer writing flat out raced that hop against
+ * loopback's throughput, and on a loaded two-core Windows host it lost: the client read all 64 MiB
+ * before the cancel landed in three runs of forty, where the kernel there takes only 0.4 to 0.6 MiB
+ * of a connection nobody reads, even after a 32 MiB flood. Held, the peer's first 512 KiB cross the
+ * cap whatever the read sizes, and what it writes after the release meets a read loop which has
+ * stopped, or which stops at its next read - the drain posts the cancel before it tells the caller.
+ * So the short write rests on the socket buffers and the close alone, as the design says it does.
+ * Before D3 nothing fails the request, the hold ends at its bound, and the red is the one above
+ *
  * THE ORDER OF THE SCOPES IS LOAD-BEARING ( the review's F2 ). A writer blocked on a zero window is
  * freed by a RST, which the kernel sends when the client's socket is CLOSED with unread data - and
  * the driver's own teardown only shuts it down ( shutdownSocket( ), TcpBaseTasks.h ); the socket
@@ -218,6 +229,7 @@ UTF_AUTO_TEST_CASE( ClientSession_AStalledSinkIsFailedAtTheOutstandingCapTests )
         CHUNK_SIZE          = 64U * 1024U,
         CHUNKS              = 1024U,
         CAP                 = 256U * 1024U,
+        HELD_AT             = 2U * CAP / CHUNK_SIZE,
     };
 
     const std::string chunk( static_cast< std::size_t >( CHUNK_SIZE ), 'x' );
@@ -247,6 +259,17 @@ UTF_AUTO_TEST_CASE( ClientSession_AStalledSinkIsFailedAtTheOutstandingCapTests )
 
             for( ; writes < static_cast< std::size_t >( CHUNKS ); ++writes )
             {
+                if( static_cast< std::size_t >( HELD_AT ) == writes )
+                {
+                    /*
+                     * Twice the cap is out: held until the case has seen the request fail - see
+                     * the case's comment. Bounded, so a request which never fails cannot hang this
+                     * thread and the destructor's join
+                     */
+
+                    self.waitForRelease();
+                }
+
                 eh::error_code ec;
 
                 ( void ) asio::write( socket, asio::buffer( chunk ), ec );
@@ -285,6 +308,15 @@ UTF_AUTO_TEST_CASE( ClientSession_AStalledSinkIsFailedAtTheOutstandingCapTests )
         const auto task = om::qi< tasks::Task >( requestTask );
 
         runSessionTask( task );
+
+        /*
+         * THE PEER GOES ON NOW, WHILE THE CLIENT'S SOCKET IS STILL OPEN, so that what it writes meets
+         * the stopped read loop and the kernel's buffers before the close frees it - the short write
+         * then says both things the design wants of it. The request is over, and its cancel is on
+         * the driver's strand already: the drain posts it before it tells the caller
+         */
+
+        peer.release();
 
         requireTrue( task -> isFailed(), "a request whose sink takes nothing should have failed" );
 

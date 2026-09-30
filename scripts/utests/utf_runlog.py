@@ -300,6 +300,10 @@ def list_content( path ):
 
 
 def run_module( path, timeout ):
+    #
+    # Returns the text the verdict reads, the exit, and what a timed-out module printed before it was
+    # killed - kept for the failure's file only, so a timeout's verdict still reads no text at all
+    #
     try:
         completed = subprocess.run(
             [ path ] + UTF_FLAGS,
@@ -307,9 +311,9 @@ def run_module( path, timeout ):
             stderr = subprocess.STDOUT,
             timeout = timeout,
             )
-        return completed.stdout.decode( 'utf-8', 'replace' ), completed.returncode
-    except subprocess.TimeoutExpired:
-        return '', 'timeout'
+        return completed.stdout.decode( 'utf-8', 'replace' ), completed.returncode, ''
+    except subprocess.TimeoutExpired as e:
+        return '', 'timeout', ( e.stdout or b'' ).decode( 'utf-8', 'replace' )
 
 
 def collect_by_running( bld_tree, only, timeout ):
@@ -327,7 +331,7 @@ def collect_by_running( bld_tree, only, timeout ):
             print( '    %-32s LISTING FAILED: %s' % ( module, error ), file = sys.stderr )
             continue
 
-        text, code = run_module( path, timeout )
+        text, code, partial = run_module( path, timeout )
         parsed = parse_run( text )
         parsed[ 'registered' ] = registered
         parsed[ 'exit' ] = code
@@ -346,16 +350,53 @@ def collect_by_running( bld_tree, only, timeout ):
             module, len( registered ), len( parsed[ 'entered' ] ),
             len( parsed[ 'skipped' ] ), code ), flush = True )
 
+        #
+        # A MODULE WHICH DID NOT EXIT CLEAN KEEPS ITS OUTPUT, beside the tree it ran from. The
+        # verdict reads only the case outcomes, so without the text a red which does not reproduce
+        # outside the gate cannot be diagnosed at all - which is what the 2026-09-29 Windows gate
+        # left of h2client4's and blobtransfer2's. A timeout keeps what it printed before the kill,
+        # which is where it hung. And so does a module which exited clean but ran fewer cases than it
+        # registered - every module runs every case it registers, so that is either a case which did
+        # not run or a line this parser could not read, and only the text says which: the same gate's
+        # last run saw utf_baselib_tasks do it once, 103 of 104, with no output left to tell.
+        # Written with newline = '' so that the binary's own line endings are kept - in text mode
+        # Windows turns each of its \r\n into \r\r\n, measured
+        #
+
+        output = text or partial
+
+        if ( 0 != code or len( parsed[ 'entered' ] ) < len( registered ) ) and output:
+            kept = os.path.join( bld_tree, 'tier3-failed', module + '.log' )
+            os.makedirs( os.path.dirname( kept ), exist_ok = True )
+            with open( kept, 'w', encoding = 'utf-8', newline = '' ) as stream:
+                stream.write( output )
+            print( '    %-32s kept its output: %s' % ( module, kept ), flush = True )
+
     return result
 
 
-def collect_by_parsing( logs_dir, only ):
+def collect_by_parsing( logs_dir, only, bld_tree = None ):
 
     result = {}
 
     if not os.path.isdir( logs_dir ):
         print( 'utf_runlog: no such directory: %s' % logs_dir, file = sys.stderr )
         return result
+
+    #
+    # A LOG WITH NO EXECUTABLE BEHIND IT IS SKIPPED, AS --run SKIPS IT - make writes a log for every
+    # test target, and for utf_baselib_plugin, a shared library, that log is its begin and end lines
+    # with nothing run between them. Read as a module it never reported clean, so every tier 3 over
+    # make's own logs was red: measured 2026-09-26 on win-x86-vc143-debug, where it was the only
+    # difference. The tree is what can tell a library from a test which crashed before printing
+    # anything, so without --bld nothing is skipped; and a module whose build failed leaves no
+    # executable either, which is why its cases then report NO LONGER RUNS, exactly as under --run
+    #
+
+    binaries = None
+
+    if bld_tree and os.path.isdir( os.path.join( bld_tree, 'utests' ) ):
+        binaries = find_binaries( bld_tree )
 
     for entry in sorted( os.listdir( logs_dir ) ):
 
@@ -365,6 +406,11 @@ def collect_by_parsing( logs_dir, only ):
         module = entry[ : -4 ]
 
         if only and module not in only:
+            continue
+
+        if binaries is not None and module not in binaries:
+            print( '    %-32s no executable in %s - skipped, as --run skips it' % (
+                module, bld_tree ), flush = True )
             continue
 
         with open( os.path.join( logs_dir, entry ), 'r', encoding = 'utf-8', errors = 'replace' ) as stream:
@@ -952,7 +998,7 @@ def main():
 
     elif args.parse_logs:
         print( 'utf_runlog: parsing %s' % args.parse_logs )
-        snapshot = collect_by_parsing( args.parse_logs, set( args.only or [] ) )
+        snapshot = collect_by_parsing( args.parse_logs, set( args.only or [] ), args.bld )
 
     elif args.against:
         snapshot, platform = load_snapshot( args.against )

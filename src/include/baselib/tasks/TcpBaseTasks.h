@@ -352,6 +352,15 @@ namespace bl
                      * data can still reset, and a peer which is slow to read could in principle
                      * lose something that way. It cannot happen for data which preceded our FIN,
                      * which is the case that was losing responses
+                     *
+                     * AND A SECOND ROUTE, THROUGH THE PEER, IS NOT NARROWED AT ALL. Once our socket
+                     * is closed, a segment the peer still sends - an HTTP/2 client's SETTINGS ACK -
+                     * is answered with a reset, and on Windows that reset discards what the peer
+                     * has not read yet, data which preceded our FIN included: measured, and the
+                     * same status( ) of 0 in H2Driver_OpeningWriteIsOneWriteTests on x86 under
+                     * load. Only a lingering close - reading until the peer's own end - closes it.
+                     * The utests' HTTP/2 test peer does that now; this teardown does not, which is
+                     * row W17 of notes/plans/issues/astra-remediation-owed-work.md
                      */
 
                     eh::error_code ec;

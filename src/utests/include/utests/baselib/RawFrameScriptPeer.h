@@ -514,6 +514,17 @@ namespace utest
 
                     case RawStepKind::Close:
                         {
+                            /*
+                             * ABORTIVE, AND KEPT SO: a bare close, and run( ) ends every script the
+                             * same way. With the client still talking, its next segment meets the
+                             * closed socket and draws a reset, which on Windows destroys whatever it
+                             * has not read - the owed list's W11. No script uses this step; a script
+                             * which needs the client to have spoken first ends in waitForClose( ),
+                             * which takes the client's next read - its end of stream, or what it sent
+                             * instead - before the close, and the silent-peer scripts end in a delay
+                             * the client's own deadline has already cut short
+                             */
+
                             eh::error_code ec;
 
                             socket.close( ec );

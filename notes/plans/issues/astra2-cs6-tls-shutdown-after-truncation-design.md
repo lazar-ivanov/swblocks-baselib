@@ -76,6 +76,12 @@ the one behavioural measurement it relies on is CS-1's, recorded in
    platform-independent and changes no outcome where there is no hang: where the shutdown's read would
    end at once, the fix changes its code from the truncation to none, and the task's ending is the same
    either way.
+   *(MEASURED ON WINDOWS, 2026-09-29, `win-x64-vc143-debug` at `edd921b` with `a5d9d9a` reverted in a
+   throwaway tree: `TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests` and the three driver cases,
+   `Http1DriverTls_ATruncatedIdleConnectionEndsWithoutWaitingTests`,
+   `SimpleHttpTls_ACompleteResponseEndedByATruncationSucceedsTests` and
+   `Http2DriverTls_ATruncatedIdleConnectionEndsWithoutWaitingTests`, were green 5 of 5 each BEFORE the
+   fix, and are after it: on IOCP the wait does not hang, as inferred. `http2-l0-state/logs/win-astra/`.)*
 
 ## 2. What skips the wait — `SSL_RECEIVED_SHUTDOWN`, set as the shutdown begins
 
@@ -276,7 +282,14 @@ left pending, as `SO_ERROR` EPIPE (`logs/astra2/cs6/c2-reset-after-fin-probe.txt
 today's shutdown read reports a truncation, which `isExpectedSslErrorCode( )` admits, and these tasks
 end clean today as well. `TlsShutdown_ATruncationThenACloseEndsCleanTests` pins it (`323a538`),
 green before the fix. The paragraph above holds only where a platform hands the read the reset
-itself — INFERRED possible on Windows, not measured; the Windows matrix measures it.)*
+itself — INFERRED possible on Windows, not measured; the Windows matrix measures it (superseded below).)*
+
+*(Measured on Windows, 2026-09-29: **Windows does hand the read the reset.** Before the fix the
+shutdown's read after the truncation got `system:10053`, and
+`TlsShutdown_ATruncationThenACloseEndsCleanTests` FAILED with it, 5 of 5; after the fix, which reads
+nothing, it ends clean, 5 of 5. So on Windows the fix changes this ending too - from a failure to a
+clean end - and the case is red before it and green after there; its header says so now.
+`http2-l0-state/logs/win-astra/`, `win-x64-vc143-debug`.)*
 
 **`hasShutdownCompletedSuccessfully( )` stays false after a skipped wait.** Today it means the
 bidirectional closure completed: `onShutdownInternal( )` sets it from the shutdown's own code

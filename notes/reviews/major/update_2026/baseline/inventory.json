@@ -3803,19 +3803,19 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 353,
+   "line": 385,
    "module": "utf_baselib_httpclient9",
    "name": "ClientSession_ASinkWhichKeepsUpIsNotCappedTests",
    "namespaces": []
   },
   {
-   "body_sha": "908e11b119bcbc9bdf795465f67ebd74",
-   "doc_sha": "6c1b2260d35871fc85b9e8f9dc49e33b",
+   "body_sha": "fb55e9944f4a730264e82beaad226793",
+   "doc_sha": "d4f952e9fc551ef5cda134b3b451ea69",
    "file": "utf_baselib_httpclient9/TestClientSessionOutstandingCap.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 211,
+   "line": 222,
    "module": "utf_baselib_httpclient9",
    "name": "ClientSession_AStalledSinkIsFailedAtTheOutstandingCapTests",
    "namespaces": []
@@ -3857,13 +3857,13 @@
    "namespaces": []
   },
   {
-   "body_sha": "b7e80269d2667a5cf86f3daca815ebed",
+   "body_sha": "56249d208fdbf1f3a4a41bd737937337",
    "doc_sha": "f2c6254d24cd4ef0586172fcbe94c813",
    "file": "utf_baselib_httpclient9/TestClientSessionEstablishmentFailure.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 255,
+   "line": 258,
    "module": "utf_baselib_httpclient9",
    "name": "ClientSession_AnOriginWhichNeverAcceptsFailsWithTheConnectionsCauseTests",
    "namespaces": []
@@ -6029,7 +6029,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2533,
+   "line": 2590,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ACompletedRequestSparesTheRetireTests",
    "namespaces": []
@@ -6041,7 +6041,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2463,
+   "line": 2520,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ADrainingAtBirthOriginIsBoundedTests",
    "namespaces": []
@@ -6053,7 +6053,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1754,
+   "line": 1811,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ADriverBesideABareTaskIsAdoptedTests",
    "namespaces": []
@@ -6065,7 +6065,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1672,
+   "line": 1729,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ADriverIsAdoptedOnlyOnceTheTaskPublishesClosedTests",
    "namespaces": []
@@ -6077,7 +6077,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2089,
+   "line": 2146,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_AForgottenConnectionIsStoppedTests",
    "namespaces": []
@@ -6089,7 +6089,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2392,
+   "line": 2449,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ANeverUsableConnectionIsChargedAndBoundedTests",
    "namespaces": []
@@ -6149,7 +6149,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2148,
+   "line": 2205,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_AssumedLimitIsNotDispatchedAgainstTests",
    "namespaces": []
@@ -6161,7 +6161,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1966,
+   "line": 2023,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ConcurrentAcquireAndReleaseTests",
    "namespaces": []
@@ -6173,7 +6173,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1272,
+   "line": 1329,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ConnectingTakesOnlyReplayableTests",
    "namespaces": []
@@ -6185,7 +6185,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1810,
+   "line": 1867,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_DisposalTests",
    "namespaces": []
@@ -6197,7 +6197,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1464,
+   "line": 1521,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_EstablishmentBoundTests",
    "namespaces": []
@@ -6209,7 +6209,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1407,
+   "line": 1464,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_FailedEstablishmentRetriesQueuedRequestsTests",
    "namespaces": []
@@ -6221,7 +6221,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1605,
+   "line": 1662,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_FallbackDriverIsPreferredTests",
    "namespaces": []
@@ -6233,7 +6233,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1516,
+   "line": 1573,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_GoAwayDrainingTests",
    "namespaces": []
@@ -6245,7 +6245,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2315,
+   "line": 2372,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_PeerLimitIsTakenFreshOnceItIsKnownTests",
    "namespaces": []
@@ -6257,7 +6257,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2234,
+   "line": 2291,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_PeerLimitLearnedFromACompletedResponseTests",
    "namespaces": []
@@ -6269,7 +6269,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1870,
+   "line": 1927,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_PolicyDefaultsTests",
    "namespaces": []
@@ -6281,7 +6281,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1118,
+   "line": 1175,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_QueueBehindPlaceholderTests",
    "namespaces": []
@@ -6305,7 +6305,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1333,
+   "line": 1390,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_RetryMatrixTests",
    "namespaces": []
@@ -6317,7 +6317,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1186,
+   "line": 1243,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_SlotLimitingTests",
    "namespaces": []
@@ -12271,7 +12271,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 886,
+   "line": 891,
    "module": "utf_baselib_tasks4",
    "name": "TcpConnectLoop_ACancelAfterTheSwitchIsOrderedWithItTests",
    "namespaces": []
@@ -12283,7 +12283,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 843,
+   "line": 848,
    "module": "utf_baselib_tasks4",
    "name": "TcpConnectLoop_ACancelDuringTheConnectEndsItPromptlyTests",
    "namespaces": []
@@ -12295,7 +12295,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 829,
+   "line": 834,
    "module": "utf_baselib_tasks4",
    "name": "TcpConnectLoop_NoEndpointAcceptingFailsTheTaskTests",
    "namespaces": []
@@ -12307,7 +12307,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 815,
+   "line": 820,
    "module": "utf_baselib_tasks4",
    "name": "TcpConnectLoop_TheFirstEndpointWhichAcceptsIsTheOneConnectedTests",
    "namespaces": []
@@ -13877,19 +13877,19 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 840,
+   "line": 842,
    "module": "utf_baselib_tasks3",
    "name": "TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests",
    "namespaces": []
   },
   {
    "body_sha": "6990d7f4941c84a92fadd69997a44b1e",
-   "doc_sha": "1361f42ea981d3c12de028073ae61c39",
+   "doc_sha": "7cbc442cff25318845cd93814a1b4974",
    "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 866,
+   "line": 869,
    "module": "utf_baselib_tasks3",
    "name": "TlsShutdown_ATruncationThenACloseEndsCleanTests",
    "namespaces": []
@@ -13901,7 +13901,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 634,
+   "line": 636,
    "module": "utf_baselib_tasks3",
    "name": "TlsShutdown_OurCloseNotifyIsAnsweredPromptlyTests",
    "namespaces": []
@@ -13913,7 +13913,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 675,
+   "line": 677,
    "module": "utf_baselib_tasks3",
    "name": "TlsShutdown_OurCloseNotifyWaitsForTheAnswerTests",
    "namespaces": []
@@ -13925,7 +13925,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 593,
+   "line": 595,
    "module": "utf_baselib_tasks3",
    "name": "TlsShutdown_ThePeersCloseNotifyEndsTheTaskPromptlyTests",
    "namespaces": []
@@ -13937,7 +13937,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 889,
+   "line": 892,
    "module": "utf_baselib_tasks3",
    "name": "TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests",
    "namespaces": []
@@ -14833,10 +14833,10 @@
    "file": "include/utests/baselib/Http2TestServer.h",
    "guards": [],
    "label": "namespace h2peer",
-   "line": 110,
+   "line": 111,
    "module": "<shared>",
    "ns": "utest",
-   "sha": "9da9d03a9a1ede39f501365294590466"
+   "sha": "45e5847ebd4e401482baea4d143fa1e5"
   },
   {
    "conditional_only": false,
@@ -14966,7 +14966,7 @@
    "line": 60,
    "module": "<shared>",
    "ns": "utest",
-   "sha": "fca83f4dcea0a45d0256d812d815fc0d"
+   "sha": "53ba7a330e681e335654e75eb96ee717"
   },
   {
    "conditional_only": false,
@@ -18788,7 +18788,7 @@
    "line": 72,
    "module": "utf_baselib_h2client4",
    "ns": "utest",
-   "sha": "eb38bfad4ea33b49d41ac478865829bf"
+   "sha": "078b790513cc5ec681889ddda7c0ba07"
   },
   {
    "conditional_only": false,
@@ -19679,7 +19679,7 @@
    "file": "utf_baselib_httpclient9/TestClientSessionEstablishmentFailure.h",
    "guards": [],
    "label": "namespace plainsession",
-   "line": 70,
+   "line": 73,
    "module": "utf_baselib_httpclient9",
    "ns": "utest",
    "sha": "b91cdb9926e807b5ef714e857cfdc001"
@@ -22219,7 +22219,7 @@
    "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
    "guards": [],
    "label": "namespace tlsending",
-   "line": 107,
+   "line": 109,
    "module": "utf_baselib_tasks3",
    "ns": "utest",
    "sha": "0ac5f0c11ce5d3e72f8075604d80d8b8"
@@ -22229,7 +22229,7 @@
    "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
    "guards": [],
    "label": "namespace tlsending",
-   "line": 716,
+   "line": 718,
    "module": "utf_baselib_tasks3",
    "ns": "utest",
    "sha": "e99e454d0cc11b501e0b4e890cb58c04"
@@ -22239,10 +22239,10 @@
    "file": "utf_baselib_tasks4/TestTcpConnectLoop.h",
    "guards": [],
    "label": "namespace connectloop",
-   "line": 97,
+   "line": 100,
    "module": "utf_baselib_tasks4",
    "ns": "utest",
-   "sha": "5d3459dfe4637461354c1ddee6f44267"
+   "sha": "88ca2ca0cb478108e21db758881315e3"
   },
   {
    "conditional_only": false,
@@ -27015,10 +27015,10 @@
   },
   {
    "file": "include/utests/baselib/Http2TestServer.h",
-   "line": 108,
+   "line": 109,
    "module": "<shared>",
    "name": "utest",
-   "sha": "8c184e0236b601715736a1396f58c8bd"
+   "sha": "447515e0500fd45d447612081cc2be28"
   },
   {
    "file": "include/utests/baselib/Http2TlsTestServer.h",
@@ -27067,7 +27067,7 @@
    "line": 58,
    "module": "<shared>",
    "name": "utest",
-   "sha": "e25a2d986d8af8ef8fc0082451031744"
+   "sha": "fc3846aaa9613e00e6cff0fff960a0e2"
   },
   {
    "file": "include/utests/baselib/TestAsyncCommon.h",
@@ -27655,7 +27655,7 @@
    "line": 70,
    "module": "utf_baselib_h2client4",
    "name": "utest",
-   "sha": "84682a428ee9c0cf9d3ccfb7c693a98a"
+   "sha": "2384b91bdac258641c60d7cced24d206"
   },
   {
    "file": "utf_baselib_h2client4/TestConnectionPoolRetiredEntry.h",
@@ -28058,7 +28058,7 @@
   },
   {
    "file": "utf_baselib_httpclient9/TestClientSessionEstablishmentFailure.h",
-   "line": 68,
+   "line": 71,
    "module": "utf_baselib_httpclient9",
    "name": "utest",
    "sha": "460696dce7906ce1769441ea8fe4bb62"
@@ -28506,24 +28506,24 @@
   },
   {
    "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
-   "line": 105,
+   "line": 107,
    "module": "utf_baselib_tasks3",
    "name": "utest",
    "sha": "e5f8d2c2e55f3cb8a7c6c03d2216a5f3"
   },
   {
    "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
-   "line": 714,
+   "line": 716,
    "module": "utf_baselib_tasks3",
    "name": "utest",
    "sha": "cff496a968864c76b6e2d6d1ffb6fbcf"
   },
   {
    "file": "utf_baselib_tasks4/TestTcpConnectLoop.h",
-   "line": 95,
+   "line": 98,
    "module": "utf_baselib_tasks4",
    "name": "utest",
-   "sha": "b012eaf5fc62784698a3e70d0dc1a14b"
+   "sha": "a7d0c83325d4a2ff3f29d8e6f580186e"
   },
   {
    "file": "utf_baselib_tasks4/TestTcpConnectOpenFailure.h",
@@ -28694,6 +28694,7 @@
      "<map>",
      "<memory>",
      "<string>",
+     "<type_traits>",
      "<vector>"
     ],
     "path": "include/utests/baselib/Http2TestServer.h"

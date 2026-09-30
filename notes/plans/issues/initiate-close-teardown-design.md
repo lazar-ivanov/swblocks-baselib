@@ -738,7 +738,8 @@ means following it past the last line one owns.
   is a second case and is not required for this gate.
 - **Windows is owed and cannot be provided here.** §2.3's `WSAESHUTDOWN` reasoning is why the flag is
   set; the flag makes the question unreachable rather than answering it, which is the point, but the
-  matrix run is what confirms no other Windows spelling leaks out of the new arm.
+  matrix run is what confirms no other Windows spelling leaks out of the new arm. *(Earned on Windows
+  2026-09-24 - §17, and the owed list's row 5a. Pointer added 2026-09-29.)*
 
 ## 11. Readiness
 

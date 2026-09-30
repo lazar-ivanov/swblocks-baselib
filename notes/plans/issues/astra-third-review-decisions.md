@@ -3,7 +3,8 @@
 **Date:** 2026-09-28. **Status: landed on Linux, 2026-09-28.**
 - CS-8 is merged at `28f7026`.
 - CS-7 is merged at `605b7d9` and gated green on `083898d` (§3).
-- Owed: only CS-7's Windows items, C1 and C2.
+- Owed: only CS-7's Windows items, C1 and C2. *(Run 2026-09-29 at `edd921b` and settled - see the end of
+  §3.)*
 
 The plan was reviewed once by fable (`plan-fable-r1.md`, agree with changes, all taken). **The three
 decisions were taken by the maintainer on 2026-09-28, as recommended:**
@@ -234,4 +235,7 @@ and `…10`, as the compiler's `-MM` found them.
 finding and no decision on the code. Its O1 became D3. Round 2 was READY, and the reviewer confirmed
 all three of the lane's corrections to its own round-1 wording.
 
-**Owed:** the Windows matrix's C1 and C2, from a pushed tip containing `605b7d9`.
+**Owed:** the Windows matrix's C1 and C2, from a pushed tip containing `605b7d9`. *(Run 2026-09-29 at
+`edd921b`, which contains it: C1 - both of T01's cases pass, within `utf_baselib_httpclient` 78 of 78 on
+x86 and x64; C2 - `utf_baselib_httpclient` measures 39.1 MB at `win-x86-vc143-debug` and 39.8 at
+`ccl16`, against the 39.6 to 41 inferred. The owed list's W10.)*
