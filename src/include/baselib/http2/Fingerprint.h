@@ -177,11 +177,11 @@ namespace bl
          *  - truncated input: parse( ) refuses bytes which end before the first header block is
          *    complete. The incremental reader instead reports it with isComplete( ), since more
          *    bytes may still come
-         *  - hostile input: nothing grows without a bound. One frame is buffered at a time, of at
-         *    most the 2^24-1 octets the Length field can say, and the reader is set to accept
-         *    all of them so that no frame is refused for a size only the server's SETTINGS could
-         *    have allowed. What is accumulated is bounded by the limits below, and each breach
-         *    is a refusal naming the bound
+         *  - hostile input: one frame is buffered at a time, of at most the 2^24-1 octets the
+         *    Length field can say, and the reader accepts every such size, since only the
+         *    server's SETTINGS, which are not in these bytes, decide what a client may send.
+         *    What is accumulated is bounded by the limits below, each breach a refusal naming
+         *    its bound - yet the first block's HPACK decode can hold gigabytes before refusing
          *
          * THE BOUNDS ARE THE SESSION'S RECEIVE-SIDE DEFAULTS, and nothing holds what the session
          * SENDS to them - it treats SETTINGS_MAX_HEADER_LIST_SIZE as advisory (Session.h,
@@ -275,8 +275,8 @@ namespace bl
                     Globals::MAX_CONTINUATION_FRAMES_PER_BLOCK_DEFAULT,
 
                 /*
-                 * The first header block, decoded - the 4.6 row again, and the bound on what an
-                 * HPACK bomb can make of a block within the size above
+                 * The first header block, decoded - the 4.6 row again: the bound on the fields a
+                 * block may decode to, not on what the decoder holds before it refuses the block
                  */
 
                 MAX_DECODED_FIRST_HEADER_BLOCK_SIZE     =
@@ -286,16 +286,16 @@ namespace bl
                  * The largest dynamic table size update the first block may carry. The client's
                  * encoder starts at the protocol's 4096 and may open its first block with an
                  * update up to what the SERVER advertised, which is not in these bytes - so the
-                 * decoder cannot be held to 4096 without refusing a well formed opening. It
-                 * cannot be unbounded either: the table holds what the block inserts, and a block
-                 * whose literals copy a long name out of the table can insert on the order of the
-                 * square of its own size
+                 * decoder cannot be held to 4096 without refusing a well formed opening. It is
+                 * the decoded bound above: up to that bound a larger table would decode nothing
+                 * differently, since a block inserts no more than it emits. What this costs is
+                 * the update itself - a first block which asks for more than 64 KB is refused
                  *
-                 * So it is the decoded bound above. Up to that bound a larger table would decode
-                 * nothing differently: a block inserts no more than it emits, a field indexed
-                 * once being emitted once, so a block within the bound never fills a table of
-                 * that size. What this costs is the update itself - a first block which asks for
-                 * more than 64 KB is refused, however little it then inserts
+                 * IT BOUNDS THE LIVE TABLE, NOT MEMORY. HPACK keeps every entry a block inserts
+                 * until the block ends, and goes on decoding past the decoded bound, so a hostile
+                 * first block within the bounds above can hold up to about 8 GB before it is
+                 * refused. The fix belongs in the HTTP/2 core's decoder; until it lands, that is
+                 * the fingerprint's bound too
                  */
 
                 HPACK_TABLE_SIZE_CEILING                = 64U * 1024U,
