@@ -1792,8 +1792,9 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_HeaderNamesAndValuesAreValidatedTests )
 
     /*
      * Values are field values as the session's http::HeaderList accepts them: no CR, LF or NUL -
-     * the header injection design 6.2 names - nor any other control character, nor leading or
-     * trailing whitespace; obs-text and inner spaces are the boundary, accepted
+     * the header injection design 6.2 names - nor any other control character but an inner
+     * horizontal tab, nor leading or trailing whitespace; obs-text and inner spaces are the
+     * boundary, accepted
      */
 
     const std::string valueRule =

@@ -28,7 +28,8 @@
 /*
  * core/Utils.h before the data model: the property macros of data/DataModelObjectDefs.h use
  * bl::utils::lexical_cast without including the header which declares it, so a translation unit
- * which includes a data model first does not compile
+ * which includes a data model first does not compile - until data/DataModelObjectDefs.h includes
+ * it itself, which is the maintainer's to decide
  */
 
 #include <baselib/core/Utils.h>
@@ -66,11 +67,16 @@ namespace bl
          * its path in the document - never by echoing its value, which may carry the very CR or LF
          * a rule exists to stop. Nothing half-loaded is ever returned
          *
-         *   - the document is at most MAX_DOCUMENT_SIZE bytes, checked before it is parsed; it is
+         *   - the document is at most MAX_DOCUMENT_SIZE bytes, checked before it is parsed, and
+         *     nested no deeper than the JSON layer allows - 512 levels on Boost.JSON; json-spirit
+         *     applies no bound, and there the size is the only one (core/JsonUtils.h); it is
          *     well-formed JSON of exactly the data model's shape: every value of its type, every
          *     required property present, and NO PROPERTY THE MODEL DOES NOT KNOW - a misspelled
          *     key would otherwise be dropped silently and its list read as empty, which for a
-         *     suite list means "keep the library default"
+         *     suite list means "keep the library default". A member name repeated within one
+         *     object is the JSON layer's to resolve and backend-defined (core/JsonUtils.h,
+         *     readFromString): on Boost.JSON the last of them is kept and validated like any other
+         *     value, and on json-spirit the document is refused
          *   - the identity: an id which is safe as a registry key and in a ConnectionKey (see
          *     isIdSafe( )), a family, one of the two grades, and deviations of printable ASCII
          *   - the TLS names by crypto::TlsNameRules - a plain name, and no anonymous or NULL suite
@@ -86,8 +92,9 @@ namespace bl
          *     the octet on the wire, so the fingerprint's weight 256 is 255 here - no PRIORITY on
          *     stream 0 and no stream depending on itself
          *   - header names as lower-case tokens and values as field values, by http::HeaderList's
-         *     own rules, which are the rules the session applies when it builds a request: no CR,
-         *     LF, NUL or any other control character, no leading or trailing whitespace
+         *     own rules, which are the rules the session applies when it builds a request: no
+         *     control character but an inner horizontal tab - so no CR, LF or NUL - and no leading
+         *     or trailing whitespace
          *   - no header the session or a driver owns: cookie and proxy-authorization, which the
          *     session merges or drops; authorization, a credential; content-length and
          *     transfer-encoding, the framing; keep-alive, proxy-connection and upgrade, which
@@ -627,8 +634,8 @@ namespace bl
              */
 
             /*
-             * Lower-case letters, digits, '.', '_' and '-'. The id keys the registry and is carried
-             * into every ConnectionKey as its TLS and HTTP/2 profile ids, where the session appends
+             * Lower-case letters, digits, '.', '_' and '-'. The id keys the registry, and a session
+             * which puts it into a ConnectionKey as its TLS and HTTP/2 profile ids appends
              * "#h2-only" to mark a request which must not go over HTTP/1.1 and recognises the mark
              * by that suffix (ClientSession.h, isH2OnlyKey( )). An id with a '#' in it could
              * therefore pass for another profile's marked key; this rule has none

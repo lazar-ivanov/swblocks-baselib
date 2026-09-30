@@ -38,14 +38,14 @@ namespace bl
          * crypto/CryptoBase.h, which is the last layer before OpenSSL. The loader must not need
          * OpenSSL to apply it and CryptoBase.h is an OpenSSL header, so the rule lives here, beside
          * TlsClientProfile.h whose names it judges and, like it, free of any OpenSSL header. It is
-         * in crypto/ and not in httpclient/ because CryptoBase.h includes it, and nothing in
-         * crypto/ may depend on httpclient/
+         * in crypto/ and not in httpclient/ because CryptoBase.h is to include it (L7-B), and
+         * nothing in crypto/ may depend on httpclient/
          *
          * WHY A FAKE TEMPLATE. Once CryptoBase.h includes this header every translation unit which
-         * uses OpenSSL compiles it, utf_baselib_io among them, and that module sits at 74.34 of its
-         * 75 MB ceiling on win-x86-ccl16-debug. A member of a class template costs a translation
-         * unit nothing unless the unit uses it, so every rule is a static member of TlsNameRulesT
-         * and there is no table and no function at namespace scope
+         * uses OpenSSL compiles it, utf_baselib_io among them, and that module sits within a
+         * megabyte of its 75 MB ceiling on win-x86-ccl16-debug. A member of a class template
+         * costs a translation unit nothing unless the unit uses it, so every rule is a static
+         * member of TlsNameRulesT and there is no table and no function at namespace scope
          *
          * This header carries no content: no suite, group or algorithm list. The name components
          * named below are OpenSSL's and IANA's spelling conventions, not an allowlist
@@ -221,8 +221,8 @@ namespace bl
              * @brief Whether a string is a plain name, i.e. safe to place in an OpenSSL list
              *
              * This is the rule crypto::CryptoBase::isCipherSuiteNameSafe has applied to cipher
-             * suite names since S3.4, exactly - the context builder moves to this one, and the
-             * loader applies it from the start, so that the two cannot drift
+             * suite names since S3.4, exactly - the context builder is to move to this one (L7-B),
+             * and the loader applies it from the start, so that the two cannot drift
              *
              * A name is a non-empty string of ASCII letters, digits, '_' and '-', beginning with a
              * letter or a digit. An OpenSSL list is a small language rather than a list of names:
