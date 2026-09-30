@@ -139,8 +139,10 @@ namespace bl
          * literal, keep-alive or close. HTTP/2 needs no mark of its own for either: the HTTP/2
          * driver removes Connection and every field it names (RFC 9113 8.2.2) and drops a Host
          * which agrees with :authority (8.3.1), without moving anything else. accept-encoding is
-         * a marker too: its value is headers.acceptEncoding intersected with the registered
-         * decoders, computed by the session per request (6.5)
+         * a marker too, isComputed with no value: its value is headers.acceptEncoding intersected
+         * with the registered decoders, computed by the session per request (6.5). isComputed
+         * means that the session computes the value (HeaderProfile.h), so the headers which are
+         * sent as their literal - connection, te and sec-ch-ua-mobile - may not carry it
          *
          * OpenSSL. This header names no OpenSSL header and makes no OpenSSL call; nothing in it
          * depends on the OpenSSL version. The data model's base header includes crypto/ for its
@@ -1236,6 +1238,23 @@ namespace bl
                 return nullptr;
             }
 
+            /*
+             * isComputed means that the session computes the value (HeaderProfile.h), so a header
+             * which is sent as the literal it carries may not be marked
+             */
+
+            static void chkSentAsLiteral(
+                SAA_in          const std::string&                              path,
+                SAA_in          const std::string&                              name,
+                SAA_in          const dm::httpclient::ProfileHeader&           model
+                )
+            {
+                if( model.isComputed() )
+                {
+                    refuse( path, "is " + name + ", which is sent as its literal: it must not be isComputed" );
+                }
+            }
+
             static void convertDefaultHeader(
                 SAA_in          const std::string&                              path,
                 SAA_in          const dm::httpclient::ProfileHeader&           model,
@@ -1305,17 +1324,19 @@ namespace bl
                 }
                 else if( "accept-encoding" == name )
                 {
-                    if( ! model.value().empty() )
+                    if( ! model.value().empty() || ! model.isComputed() )
                     {
                         refuse(
                             path,
                             "is accept-encoding, whose value the session computes from "
-                            "headers.acceptEncoding: it must carry no value"
+                            "headers.acceptEncoding: it must be isComputed and carry no value"
                             );
                     }
                 }
                 else if( "connection" == name )
                 {
+                    chkSentAsLiteral( path, name, model );
+
                     if(
                         ! equalsIgnoreCase( model.value(), "keep-alive" ) &&
                         ! equalsIgnoreCase( model.value(), "close" )
@@ -1326,6 +1347,8 @@ namespace bl
                 }
                 else if( "te" == name )
                 {
+                    chkSentAsLiteral( path, name, model );
+
                     if( ! equalsIgnoreCase( model.value(), "trailers" ) )
                     {
                         refuse(
@@ -1336,6 +1359,8 @@ namespace bl
                 }
                 else if( "sec-ch-ua-mobile" == name )
                 {
+                    chkSentAsLiteral( path, name, model );
+
                     if( "?0" != model.value() && "?1" != model.value() )
                     {
                         refuse( path + ".value", "is neither ?0 nor ?1" );

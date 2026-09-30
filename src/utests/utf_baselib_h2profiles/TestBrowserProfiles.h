@@ -109,7 +109,7 @@ namespace utest
                 R"json( { "name": "user-agent" },)json"
                 R"json( { "name": "accept", "value": "text/test,*/*;q=0.8" },)json"
                 R"json( { "name": "sec-fetch-site", "value": "none", "isComputed": true },)json"
-                R"json( { "name": "accept-encoding" },)json"
+                R"json( { "name": "accept-encoding", "isComputed": true },)json"
                 R"json( { "name": "accept-language", "value": "en-US,en;q=0.9" },)json"
                 R"json( { "name": "priority", "value": "u=0, i" } ],)json"
                 R"json( "callerHeaderPlacement": "BeforeAnchor", "callerHeaderAnchor": "accept-encoding",)json"
@@ -759,7 +759,7 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_ValidProfileLoadsFieldByFieldTests )
             );
 
         /*
-         * host is a marker whose value each request supplies; accept-encoding the session
+         * host is a marker whose value each request supplies; accept-encoding one the session
          * computes; sec-fetch-site keeps its default beside its mark
          */
 
@@ -772,6 +772,7 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_ValidProfileLoadsFieldByFieldTests )
         UTF_REQUIRE_EQUAL( navigation.defaultHeaders[ 7 ].value, "none" );
         UTF_REQUIRE_EQUAL( navigation.defaultHeaders[ 7 ].isComputed.value(), true );
         UTF_REQUIRE_EQUAL( navigation.defaultHeaders[ 8 ].value, "" );
+        UTF_REQUIRE_EQUAL( navigation.defaultHeaders[ 8 ].isComputed.value(), true );
         UTF_REQUIRE_EQUAL( navigation.defaultHeaders[ 9 ].value, "en-US,en;q=0.9" );
         UTF_REQUIRE_EQUAL( navigation.defaultHeaders[ 10 ].value, "u=0, i" );
 
@@ -2053,24 +2054,61 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_HttpOneOnlyHeadersAreRepresentedTests )
     }
 
     /*
-     * accept-encoding is a marker too: the session computes its value per request, from
-     * headers.acceptEncoding and the registered decoders (6.5)
+     * accept-encoding is a marker too, isComputed with no value: the session computes its value per
+     * request, from headers.acceptEncoding and the registered decoders (6.5). isComputed means that
+     * the session computes the value (HeaderProfile.h), so the headers which are sent as their
+     * literal - connection, te and sec-ch-ua-mobile - may not carry it (the checkpoint review's
+     * C1-11)
      */
 
     {
+        const std::string marker = R"json({ "name": "accept-encoding", "isComputed": true })json";
+
+        const std::string encodingRule =
+            "headers.navigation.defaultHeaders[8] is accept-encoding, whose value the session computes from "
+            "headers.acceptEncoding: it must be isComputed and carry no value";
+
         auto encoding = document;
 
         encoding.navigation = replaced(
-            encoding.navigation,
-            R"json({ "name": "accept-encoding" })json",
-            R"json({ "name": "accept-encoding", "value": "gzip, br" })json"
+            document.navigation,
+            marker,
+            R"json({ "name": "accept-encoding", "value": "gzip, br", "isComputed": true })json"
             );
+        requireRefused( encoding, encodingRule );
 
-        requireRefused(
-            encoding,
-            "headers.navigation.defaultHeaders[8] is accept-encoding, whose value the session computes from "
-            "headers.acceptEncoding: it must carry no value"
+        encoding.navigation = replaced( document.navigation, marker, R"json({ "name": "accept-encoding" })json" );
+        requireRefused( encoding, encodingRule );
+    }
+
+    {
+        const std::string literalRule = ", which is sent as its literal: it must not be isComputed";
+
+        auto literal = document;
+
+        literal.navigation = replaced(
+            document.navigation,
+            R"json({ "name": "connection", "value": "keep-alive" })json",
+            R"json({ "name": "connection", "value": "keep-alive", "isComputed": true })json"
             );
+        requireRefused( literal, "headers.navigation.defaultHeaders[1] is connection" + literalRule );
+
+        literal.navigation = replaced(
+            document.navigation,
+            R"json({ "name": "sec-ch-ua-mobile", "value": "?0" })json",
+            R"json({ "name": "sec-ch-ua-mobile", "value": "?0", "isComputed": true })json"
+            );
+        requireRefused( literal, "headers.navigation.defaultHeaders[3] is sec-ch-ua-mobile" + literalRule );
+
+        const std::string accept = R"json({ "name": "accept", "value": "image/test" })json";
+
+        literal = document;
+        literal.subresource = replaced(
+            document.subresource,
+            accept,
+            accept + R"json(, { "name": "te", "value": "trailers", "isComputed": true })json"
+            );
+        requireRefused( literal, "headers.subresource.defaultHeaders[2] is te" + literalRule );
     }
 }
 
