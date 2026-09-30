@@ -344,6 +344,23 @@ class TestHttp2Capture:
         lingering_client_close(tls)
         server.stop()
 
+    def test_a_stop_lands_while_the_client_keeps_sending(self, start_server, certificates):
+        """A1-14: the stop check between batches ends a connection whose client never leaves it idle for a
+        poll. Every PING here is sent as soon as the one before is answered, and GOAWAY must still come."""
+        server = start_server()
+        tls, client = navigate(server.port, client_context(certificates))
+        server.request_stop()
+        for _ in range(20):
+            client.send(frame(6, 0, 0, b"keepbusy"))
+            client.read_until(lambda: client.goaway is not None or b"keepbusy" in client.ping_acks)
+            if client.goaway is not None:
+                break
+            client.ping_acks.remove(b"keepbusy")
+        assert client.goaway == (5, 0)
+        client.read_to_end()
+        tls.close()
+        server.wait()
+
     def test_negative_control_without_the_linger_the_late_frames_are_lost(self, start_server, certificates):
         """The same close with the bound at 0: the tool closes without reading, so the assertion above
         about late frames is one that can fail."""
