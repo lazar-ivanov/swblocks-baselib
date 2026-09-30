@@ -1061,6 +1061,13 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_VersionStringsAreValidatedTests )
         badBrand.secChUaBrands = R"json([ { "brand": "Test", "version": "1\n" } ])json";
         requireRefused( badBrand, "secChUaBrands[0].version carries a character outside printable ASCII" );
 
+        /*
+         * A brand once: sec-ch-ua never names one twice, whatever the versions
+         */
+
+        badBrand.secChUaBrands = R"json([ { "brand": "Test", "version": "1" }, { "brand": "Test", "version": "2" } ])json";
+        requireRefused( badBrand, "secChUaBrands[1].brand repeats an earlier brand" );
+
         auto badPlatform = document;
 
         badPlatform.platform = R"json("Test\tPlatform")json";

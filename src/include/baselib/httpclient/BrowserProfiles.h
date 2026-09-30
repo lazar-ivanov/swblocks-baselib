@@ -494,6 +494,14 @@ namespace bl
                             );
                     }
 
+                    for( std::size_t j = 0U; j < i; ++j )
+                    {
+                        if( brands[ j ] -> brand() == brand.brand() )
+                        {
+                            refuse( at( "secChUaBrands", i ) + ".brand", "repeats an earlier brand" );
+                        }
+                    }
+
                     if( ! result.secChUa.empty() )
                     {
                         result.secChUa += ", ";
