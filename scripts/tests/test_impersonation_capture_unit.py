@@ -585,7 +585,7 @@ class TestFollowers:
         stream += frame(1, 0x21, 1, bytes.fromhex("80000000ff") + block[:5]) + frame(9, 0x04, 1, block[5:])
         follower = capture.H2Follower()
         events = follower.feed(stream)
-        assert [event[0] for event in events] == ["settings", "window_update", "request"]
+        assert [event[0] for event in events] == ["settings", "window_update", "stream_open", "request"]
         assert [frame["type"] for frame in follower.frames] == ["SETTINGS", "WINDOW_UPDATE", "PRIORITY", "HEADERS",
                                                                 "CONTINUATION"]
         request = follower.requests[0]

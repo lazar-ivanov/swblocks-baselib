@@ -927,7 +927,7 @@ class H2Follower:
         self.streams[stream] = request
         self.requests.append(request)
         self.highest_stream = max(self.highest_stream, stream)
-        return [("request", request)] if request["ended"] else []
+        return [("stream_open", stream)] + ([("request", request)] if request["ended"] else [])
 
 
 class H1Follower:
@@ -1302,6 +1302,8 @@ class Connection(threading.Thread):
         elif event[0] == "rst_stream":
             self.pending.pop(event[1], None)
             self.windows.pop(event[1], None)
+        elif event[0] == "stream_open":
+            self.windows.setdefault(event[1], self.peer_initial_window)
         elif event[0] == "request":
             request = event[1]
             self.meta["request_times"][str(request["stream"])] = now_text()
@@ -1310,7 +1312,7 @@ class Connection(threading.Thread):
             self.size_update_due = False
             self._send_frame(HEADERS, FLAG_END_HEADERS | (0 if body else FLAG_END_STREAM), request["stream"], block)
             if body:
-                self.windows[request["stream"]] = self.peer_initial_window
+                self.windows.setdefault(request["stream"], self.peer_initial_window)
                 self.pending[request["stream"]] = bytearray(body)
 
     def _pump(self):

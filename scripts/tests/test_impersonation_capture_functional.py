@@ -329,6 +329,20 @@ class TestHttp2Capture:
         lingering_client_close(tls)
         server.stop()
 
+    def test_a_stream_window_update_before_the_request_ends_is_kept(self, start_server, certificates):
+        """A1-17: a stream's send window starts when the stream opens, so a WINDOW_UPDATE the client sends
+        before its request's END_STREAM counts: the page's 100-byte window is opened wide before it is due."""
+        server = start_server()
+        tls = connect(server.port, client_context(certificates))
+        client = H2Client(tls)
+        block = b"".join([indexed(3), literal("without", 1, HOST), indexed(7), indexed(4)])     # POST https /
+        client.barrier(before=capture.H2_PREFACE + frame(4, 0, 0, bytes.fromhex("000400000064"))
+                       + frame(1, 0x04, 1, block) + frame(8, 0, 1, (10000).to_bytes(4, "big"))
+                       + frame(0, 0x01, 1, b"x"))
+        assert client.ended(1)() and client.responses[1]["body"] == capture.PAGE
+        lingering_client_close(tls)
+        server.stop()
+
     def test_negative_control_without_the_linger_the_late_frames_are_lost(self, start_server, certificates):
         """The same close with the bound at 0: the tool closes without reading, so the assertion above
         about late frames is one that can fail."""
