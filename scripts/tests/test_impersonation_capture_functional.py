@@ -129,12 +129,25 @@ def frame(frame_type, flags, stream, payload):
 CLIENT_SETTINGS = [(1, 65536), (2, 0), (4, 6291456), (6, 262144)]
 CLIENT_WINDOW_UPDATE = 15663105
 
-# The dynamic table after it, newest first: sec-fetch-mode 62, accept 63, user-agent 64, :authority 65
+# A navigation typed into the address bar (P-1). The dynamic table after it, newest first: sec-fetch-mode 62,
+# accept 63, user-agent 64, :authority 65
 NAVIGATION_BLOCK = b"".join([
     indexed(2), literal("incremental", 1, HOST, coded=True), indexed(7), indexed(4),
     literal("incremental", 58, "test-agent/1.0", coded=True), literal("incremental", 19, "text/html"),
     literal("incremental", "sec-fetch-mode", "navigate", coded=True, name_coded=True),
+    literal("without", "sec-fetch-site", "none"), literal("without", "sec-fetch-user", "?1"),
     literal("without", 17, "en-US,en;q=0.9")])
+
+# The script, the image and the fetch on the navigation's connection, reusing its dynamic table: a cookie of two
+# crumbs, the second never indexed, and a table size update opening the fetch's block
+SCRIPT_BLOCK = b"".join([indexed(2), indexed(65), indexed(7), literal("without", 4, "/capture.js"), indexed(64),
+                         literal("without", 19, "*/*"), literal("incremental", 32, "capture_a=1"),
+                         literal("never", 32, "capture_b=2")])
+IMAGE_BLOCK = b"".join([indexed(2), indexed(66), indexed(7), literal("without", 4, "/capture.png"), indexed(65),
+                        literal("without", 19, "image/png"), indexed(62), literal("never", 32, "capture_b=2")])
+FETCH_BLOCK = b"".join([capture.encode_integer(2048, 5, 0x20), indexed(2), indexed(66), indexed(7),
+                        literal("without", 4, "/fetch"), indexed(65), literal("without", 19, "*/*"), indexed(62),
+                        literal("never", 32, "capture_b=2")])
 
 
 def opening(block=NAVIGATION_BLOCK):
@@ -237,17 +250,7 @@ class TestHttp2Capture:
         assert (":status", "200") in navigation["headers"]
         assert [value for name, value in navigation["headers"] if name == "set-cookie"] == list(capture.COOKIES)
 
-        # The script, the image and the fetch, on the same connection, reusing the dynamic table: a cookie
-        # of two crumbs, the second never indexed, and a table size update opening the fetch's block
-        script = b"".join([indexed(2), indexed(65), indexed(7), literal("without", 4, "/capture.js"), indexed(64),
-                           literal("without", 19, "*/*"), literal("incremental", 32, "capture_a=1"),
-                           literal("never", 32, "capture_b=2")])
-        image = b"".join([indexed(2), indexed(66), indexed(7), literal("without", 4, "/capture.png"), indexed(65),
-                          literal("without", 19, "image/png"), indexed(62), literal("never", 32, "capture_b=2")])
-        fetch = b"".join([capture.encode_integer(2048, 5, 0x20), indexed(2), indexed(66), indexed(7),
-                          literal("without", 4, "/fetch"), indexed(65), literal("without", 19, "*/*"), indexed(62),
-                          literal("never", 32, "capture_b=2")])
-        client.send(frame(1, 0x05, 7, script) + frame(1, 0x05, 9, image) + frame(1, 0x05, 11, fetch)
+        client.send(frame(1, 0x05, 7, SCRIPT_BLOCK) + frame(1, 0x05, 9, IMAGE_BLOCK) + frame(1, 0x05, 11, FETCH_BLOCK)
                     + frame(6, 0, 0, b"pingpong"))
         client.read_until(lambda: client.ended(7, 9, 11)() and client.ping_acks)
         assert client.ping_acks == [b"pingpong"]
@@ -291,7 +294,8 @@ class TestHttp2Capture:
         assert [(f["name"], f["representation"], f.get("value_huffman")) for f in first["fields"]] == [
             (":method", "indexed", None), (":authority", "incremental", True), (":scheme", "indexed", None),
             (":path", "indexed", None), ("user-agent", "incremental", True), ("accept", "incremental", False),
-            ("sec-fetch-mode", "incremental", True), ("accept-language", "without_indexing", False)]
+            ("sec-fetch-mode", "incremental", True), ("sec-fetch-site", "without_indexing", False),
+            ("sec-fetch-user", "without_indexing", False), ("accept-language", "without_indexing", False)]
         assert first["fields"][6]["name_huffman"] is True
         assert requests[0]["headers"][:2] == [["user-agent", "test-agent/1.0"], ["accept", "text/html"]]
         crumbs = [(f["value"], f["representation"]) for f in requests[1]["header_block"]["fields"] if f["name"] == "cookie"]
@@ -318,6 +322,26 @@ class TestHttp2Capture:
 
         # Everything in the summary is derived from the stored bytes: deriving it again gives the same
         assert capture.analyse_session(server.out_dir) == summary
+
+    def test_two_good_visits_make_a_report_with_no_problem(self, start_server, certificates):
+        """The good path end to end: two visits, each typed and on a connection of its own, each loading the page,
+        its script, its image and its fetch - and a report with no PROBLEM or Note line, as the README shows it."""
+        server = start_server()
+        for _ in range(2):
+            tls, client = navigate(server.port, client_context(certificates))
+            client.send(frame(1, 0x05, 7, SCRIPT_BLOCK) + frame(1, 0x05, 9, IMAGE_BLOCK)
+                        + frame(1, 0x05, 11, FETCH_BLOCK))
+            client.read_until(client.ended(7, 9, 11))
+            lingering_client_close(tls)
+        summary = server.stop()
+        lines = capture.format_report(summary).splitlines()
+        assert [line for line in lines if line.startswith(("PROBLEM", "Note"))] == []
+        assert lines[0] == "test client: 2 connection(s), 2 ClientHello(s)"
+        assert lines[1].startswith("JA4 identical across every hello: yes, t13d")
+        assert lines[2:] == ["Navigation on connection %d, ALPN h2: the script, the image and the fetch on the same "
+                             "connection" % number for number in (1, 2)] + ["Lingering closes: the client closed"]
+        assert summary["checks"]["visit_agreement"] == [{"visit": 2, "connection": 2, "compared_with": 1,
+                                                         "differs": [], "header_order_differs": False}]
 
     def test_a_ping_is_answered_after_the_data_of_the_requests_before_it(self, start_server, certificates):
         """The tool answers frames in order: the DATA a request is owed goes out before the ACK of a PING sent

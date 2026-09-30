@@ -819,6 +819,64 @@ class TestInterception:
         assert "PROBLEM" not in capture.format_report(summary)
 
 
+def replaced(fields, name, value):
+    """The fields with 'name' set to 'value', or without it when value is None."""
+    out = [(n, v) for n, v in fields if n != name]
+    return out if value is None else out + [(name, value)]
+
+
+class TestProvenance:
+    """P-1, F5(i): the navigation is typed into the address bar - not a link, a reload, a prefetch or a
+    prerender - as its own headers say."""
+
+    @pytest.mark.parametrize("name, value, text", [
+        ("sec-fetch-site", "same-origin", "not typed into the address bar (sec-fetch-site: same-origin"),
+        ("sec-fetch-site", "cross-site", "not typed into the address bar (sec-fetch-site: cross-site"),
+        ("sec-fetch-user", None, "sec-fetch-user: None)"),
+        ("cache-control", "max-age=0", "a reload (cache-control: max-age=0)"),
+        ("cache-control", "no-cache", "a reload (cache-control: no-cache)"),
+        ("sec-purpose", "prefetch;prerender", "the navigation request is a prefetch or a prerender"),
+        ("purpose", "prefetch", "the navigation request is a prefetch or a prerender"),
+        ("x-moz", "prefetch", "the navigation request is a prefetch or a prerender"),
+    ], ids=["a-link", "a-link-from-another-site", "no-user-activation", "a-reload", "a-hard-reload",
+            "a-prerender", "a-prefetch", "a-firefox-prefetch"])
+    def test_a_navigation_that_was_not_typed(self, tmp_path, name, value, text):
+        fields = replaced(NAVIGATION_FIELDS, name, value)
+        summary = write_session(tmp_path, [{"plain": h2_plain(requests=(fields,))}, {}])
+        problems = summary["checks"]["navigation_provenance"]["1"]
+        assert any(text in problem for problem in problems), problems
+        assert "PROBLEM: on connection 1, " in capture.format_report(summary)
+
+    def test_a_prerender_marks_its_subresources_too(self, tmp_path):
+        script = [(":method", "GET"), (":authority", "capture.test"), (":scheme", "https"), (":path", "/capture.js"),
+                  ("sec-purpose", "prefetch;prerender")]
+        summary = write_session(tmp_path, [{"plain": h2_plain(requests=(NAVIGATION_FIELDS, script))}, {}])
+        assert summary["checks"]["navigation_provenance"] == {
+            "1": ["the subresource-script request is a prefetch or a prerender (sec-purpose: prefetch;prerender)"]}
+
+    def test_a_link_over_http1_whatever_the_case(self, tmp_path):
+        head = TYPED_HTTP1_NAVIGATION.replace(b"Sec-Fetch-Site: none", b"Sec-Fetch-Site: same-site")
+        summary = write_session(tmp_path, [{"plain": head}], run="http/1.1")
+        assert "not typed" in summary["checks"]["navigation_provenance"]["1"][0]
+
+    def test_no_sec_fetch_header_at_all_is_a_note(self, tmp_path):
+        """Safari before 16.4 sends none: nothing can be told, and the tool does not guess."""
+        silent = [(n, v) for n, v in NAVIGATION_FIELDS if not n.startswith("sec-fetch-")]
+        summary = write_session(tmp_path, [{"plain": h2_plain(requests=(silent,))},
+                                           {"plain": h2_plain(requests=(silent,))}])
+        assert summary["checks"]["navigations_without_sec_fetch"] == [1, 2]
+        assert summary["checks"]["navigation_provenance"] == {}
+        report = capture.format_report(summary)
+        assert ("Note: cannot tell how the navigation on connection(s) [1, 2] was reached: the browser sends no "
+                "Sec-Fetch headers" in report)
+        assert "PROBLEM" not in report
+
+    def test_a_typed_navigation_is_no_problem(self, tmp_path):
+        summary = write_session(tmp_path, [{}, {}])
+        assert summary["checks"]["navigation_provenance"] == {}
+        assert summary["checks"]["navigations_without_sec_fetch"] == []
+
+
 # ========== The controls that need no socket ==========
 
 class TestControls:

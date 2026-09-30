@@ -1666,6 +1666,38 @@ def _header_names(analysed):
 
 
 PROXY_HEADERS = ("via", "forwarded", "x-forwarded-for", "proxy-connection")
+PREFETCH_HEADERS = ("sec-purpose", "purpose", "x-moz")
+
+
+def _provenance(exchanges):
+    """
+    How the navigation was reached, from its own headers (F5(i), P-1): typed into the address bar, and not a
+    link, a reload, a prefetch or a prerender. Returns the problems, and whether the browser sent no Sec-Fetch
+    header at all - then nothing can be told, which is a Note and not a PROBLEM.
+    """
+    problems, silent = [], False
+    for request in exchanges:
+        if request["after_close_began"]:
+            continue
+        headers = [(name.lower(), value) for name, value in request["headers"]]
+        marks = ["%s: %s" % (name, value) for name, value in headers if name in PREFETCH_HEADERS]
+        if marks:
+            problems.append("the %s request is a prefetch or a prerender (%s)" % (request["kind"], "; ".join(marks)))
+        if request["kind"] != "navigation":
+            continue
+        fetch = {name: value for name, value in headers if name.startswith("sec-fetch-")}
+        typed = ("none", "navigate", "?1")
+        if not fetch:
+            silent = True
+        elif (fetch.get("sec-fetch-site"), fetch.get("sec-fetch-mode"), fetch.get("sec-fetch-user")) != typed:
+            problems.append("the navigation was not typed into the address bar (sec-fetch-site: %s, "
+                            "sec-fetch-mode: %s, sec-fetch-user: %s)" % (fetch.get("sec-fetch-site"),
+                                                                         fetch.get("sec-fetch-mode"),
+                                                                         fetch.get("sec-fetch-user")))
+        reload = [value for name, value in headers if name == "cache-control"]
+        if reload:
+            problems.append("the navigation was a reload (cache-control: %s)" % ", ".join(reload))
+    return problems, silent
 
 
 def _interception_symptoms(hello, alpn, exchanges, h2_run):
@@ -1708,6 +1740,7 @@ def analyse_session(out_dir):
         exchanges = (analysed.get("http2") or analysed.get("http1") or {}).get("requests", [])
         if hello is not None:
             ja4_values.setdefault(hello["ja4"]["fingerprint"], []).append(analysed["connection"])
+        provenance, no_sec_fetch = _provenance(exchanges)
         rows.append({
             "connection": analysed["connection"], "accepted_at": meta.get("accepted_at"),
             "handshake": meta.get("handshake"), "tls_version": meta.get("tls_version"), "alpn": meta.get("alpn"),
@@ -1718,6 +1751,7 @@ def analyse_session(out_dir):
             "ended_by": meta.get("ended_by"), "lingering_close": (meta.get("linger") or {}).get("outcome"),
             "interception_symptoms": _interception_symptoms(hello, meta.get("alpn"), exchanges,
                                                             session.get("pass", "h2") == "h2"),
+            "navigation_provenance": provenance, "navigation_without_sec_fetch": no_sec_fetch,
         })
         for request in exchanges:
             requests.append({"connection": analysed["connection"], "stream": request.get("stream"),
@@ -1761,6 +1795,9 @@ def analyse_session(out_dir):
         "visit_agreement": visits,
         "interception_symptoms": {str(row["connection"]): row["interception_symptoms"] for row in rows
                                   if row["interception_symptoms"]},
+        "navigation_provenance": {str(row["connection"]): row["navigation_provenance"] for row in rows
+                                  if row["navigation_provenance"]},
+        "navigations_without_sec_fetch": [row["connection"] for row in rows if row["navigation_without_sec_fetch"]],
         "kinds_missing_from_navigation_connection": {
             str(number): [kind for kind in REQUIRED_KINDS if kind not in by_number[number]["kinds"]]
             for number in navigations},
@@ -1809,6 +1846,11 @@ def format_report(summary):
         if visit["header_order_differs"]:
             lines.append("Note: the navigation's header order differs between visit 1 (connection %s) and visit %d "
                          "(connection %s)" % (visit["compared_with"], visit["visit"], visit["connection"]))
+    for number, problems in checks["navigation_provenance"].items():
+        lines.append("PROBLEM: on connection %s, %s: README 2.2, step 2" % (number, "; ".join(problems)))
+    if checks["navigations_without_sec_fetch"]:
+        lines.append("Note: cannot tell how the navigation on connection(s) %s was reached: the browser sends no "
+                     "Sec-Fetch headers" % checks["navigations_without_sec_fetch"])
     for number, symptoms in checks["interception_symptoms"].items():
         lines.append("PROBLEM: something may stand between the browser and the tool on connection %s (%s): "
                      "README 1.5" % (number, "; ".join(symptoms)))
