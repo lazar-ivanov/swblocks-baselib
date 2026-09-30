@@ -1,0 +1,13 @@
+# each slice appends the recipes for the cases it lands here
+
+# L7-D - http2/Fingerprint.h, the HTTP/2 fingerprint of the frames a session produced (design 6.4, 6.6)
+--log_level=message --run_test=Http2Fingerprint_PaperExamplesRenderExactlyTests
+--log_level=message --run_test=Http2Fingerprint_SessionOpeningsRenderAsTheirProfilesSayTests
+--log_level=message --run_test=Http2Fingerprint_SessionOpeningEdgeShapesTests
+--log_level=message --run_test=Http2Fingerprint_ContinuationPaddingAndPriorityFlagsTests
+--log_level=message --run_test=Http2Fingerprint_FramesSplitAcrossReadsTests
+--log_level=message --run_test=Http2Fingerprint_WhichFramesAreReadTests
+--log_level=message --run_test=Http2Fingerprint_MalformedOpeningsAreRefusedTests
+--log_level=message --run_test=Http2Fingerprint_BoundsAreEnforcedAtTheirEdgesTests
+--log_level=message --run_test=Http2Fingerprint_TruncatedOpeningsAreRefusedTests
+--log_level=message --run_test=Http2Fingerprint_ReaderContractAndRenderingTests
