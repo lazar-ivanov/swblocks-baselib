@@ -335,6 +335,36 @@ namespace utest
             requireRefused( document.json(), expected );
         }
 
+        /**
+         * @brief The document is refused for its shape, and the message ends in the chain of
+         * properties given - "for property 'weight' for property 'idleStreamPriorities' for property
+         * 'http2'" - which both JSON backends put last (json::rethrowWithContext( )), so that the
+         * refusal is attributed to the property it is about. The middle of the message is the
+         * backend's own and is not asserted
+         */
+
+        inline void requireShapeRefused(
+            SAA_in              const ProfileDocument&                          document,
+            SAA_in              const std::string&                              properties
+            )
+        {
+            const auto json = document.json();
+
+            requireRefused( json, "document is not a browser profile of the expected shape - " );
+
+            try
+            {
+                ( void ) bl::httpclient::BrowserProfiles::load( json );
+            }
+            catch( bl::InvalidDataFormatException& e )
+            {
+                const std::string message = e.what();
+
+                UTF_REQUIRE( message.size() >= properties.size() );
+                UTF_REQUIRE_EQUAL( message.substr( message.size() - properties.size() ), properties );
+            }
+        }
+
         inline const bl::httpclient::HeaderProfileForKind& kindOf(
             SAA_in              const bl::httpclient::BrowserProfile&           profile,
             SAA_in              const bl::httpclient::HttpRequestKind           kind
@@ -1145,26 +1175,37 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_MalformedDocumentsAreRefusedTests )
      * required property missing: the data model's refusals, carried as the loader's own exception
      */
 
-    requireRefused( "{ \"id\": ", shape );
+    requireRefused( "{ \"id\": ", shape + "JSON parser error" );
     requireRefused( "[]", shape + "The JSON document must be an object at the top level" );
+
+    /*
+     * Each attributed to its property by the chain the data model names it by (the checkpoint
+     * review's C1-5)
+     */
 
     {
         auto wrongType = document;
 
         wrongType.id = "5";
-        requireRefused( wrongType, shape );
+        requireShapeRefused( wrongType, "for property 'id'" );
 
         wrongType = document;
         wrongType.settings = R"json([ { "id": 3000000000, "value": 1 } ])json";
-        requireRefused( wrongType, shape );
+        requireShapeRefused( wrongType, "for property 'id' for property 'settings' for property 'http2'" );
 
         wrongType = document;
         wrongType.idleStreamPriorities = R"json([ { "streamId": -1 } ])json";
-        requireRefused( wrongType, shape );
+        requireShapeRefused(
+            wrongType,
+            "for property 'streamId' for property 'idleStreamPriorities' for property 'http2'"
+            );
 
         wrongType = document;
         wrongType.idleStreamPriorities = R"json([ { "streamId": 3, "weight": 1.5 } ])json";
-        requireRefused( wrongType, shape );
+        requireShapeRefused(
+            wrongType,
+            "for property 'weight' for property 'idleStreamPriorities' for property 'http2'"
+            );
 
         auto missing = document;
 
