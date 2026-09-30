@@ -1279,7 +1279,7 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_MalformedDocumentsAreRefusedTests )
         repeated.extraTopLevel = R"json("platform": "LaterPlatform")json";
 
 #ifdef BL_USE_JSON_SPIRIT
-        requireRefused( repeated, shape );
+        requireRefused( repeated, shape + "Duplicate entry encountered for property with name 'platform'" );
 #else
         UTF_REQUIRE_EQUAL(
             kindOf( requireLoads( repeated ), httpclient::HttpRequestKind::Navigation ).defaultHeaders[ 4 ].value,
