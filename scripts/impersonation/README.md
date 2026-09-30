@@ -159,8 +159,9 @@ Lingering closes: the client closed
 ```
 
 More connections than visits is normal: browsers open spare ones. Every connection is recorded, and the
-report marks the ones that carried a navigation. A line beginning **PROBLEM** is explained in section 5.
-Keep the capture either way.
+report marks the ones that carried a navigation. `the client reset the connection` among the lingering
+closes is normal too: a browser that quits may reset its connections. A line beginning **PROBLEM** is
+explained in section 5. Keep the capture either way.
 
 ### 2.3 The HTTP/1.1 run: one visit
 
