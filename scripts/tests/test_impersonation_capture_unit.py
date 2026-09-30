@@ -660,6 +660,19 @@ class TestControls:
         assert capture.inside_git_work_tree(str(REPOSITORY / "scripts"))
         assert not capture.inside_git_work_tree(str(tmp_path))
 
+    def test_a_symlink_into_a_repository_is_followed(self, tmp_path):
+        """A1-11: a --dir reached through a symlink into a checkout is inside it, and is refused."""
+        (tmp_path / "repository" / ".git").mkdir(parents=True)
+        (tmp_path / "repository" / "scripts").mkdir()
+        (tmp_path / "outside").mkdir()
+        try:
+            (tmp_path / "outside" / "link").symlink_to(tmp_path / "repository" / "scripts", target_is_directory=True)
+        except OSError:
+            pytest.skip("this host cannot make a symlink")
+        with pytest.raises(capture.CaptureError, match="inside a git work tree"):
+            capture.make_certificates(capture.DEFAULT_HOST, str(tmp_path / "outside" / "link" / "certs"))
+        assert not (tmp_path / "repository" / "scripts" / "certs").exists()
+
     def test_the_interpreter_check_prints_the_tls_library(self, capsys):
         """F5(k): the check prints ssl.OPENSSL_VERSION, and this host's Python passes it."""
         assert capture.interpreter_problems() == []

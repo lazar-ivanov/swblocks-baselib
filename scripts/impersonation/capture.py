@@ -1734,7 +1734,7 @@ def find_openssl(explicit=None):
 
 
 def inside_git_work_tree(path):
-    path = os.path.abspath(path)
+    path = os.path.realpath(path)
     while True:
         if os.path.exists(os.path.join(path, ".git")):
             return True
@@ -1753,12 +1753,12 @@ def make_certificates(host, directory, openssl=None, days=7):
     host = validate_host(host)
     if inside_git_work_tree(directory):
         raise CaptureError("%s is inside a git work tree: keep the session's keys outside any repository"
-                           % os.path.abspath(directory))
+                           % os.path.realpath(directory))
     tool = find_openssl(openssl)
     if tool is None:
         raise CaptureError("no openssl command was found; on Windows it comes with Git for Windows: pass "
                            "--openssl \"C:\\Program Files\\Git\\usr\\bin\\openssl.exe\"")
-    directory = os.path.abspath(directory)
+    directory = os.path.realpath(directory)
     os.makedirs(directory, exist_ok=True)
     path = {name: os.path.join(directory, name)
             for name in ("ca.cnf", "leaf.cnf", "ca.key", "ca.pem", "leaf.key", "leaf.csr", "leaf.pem")}
