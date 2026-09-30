@@ -3557,6 +3557,162 @@
    "namespaces": []
   },
   {
+   "body_sha": "464769610deec89494b9119e1c030f6d",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1867,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_HeaderNamesAndValuesAreValidatedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "622f9892e348cf4827eed152b02ee42d",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1692,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_Http2PrioritiesAndWindowsAreValidatedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "193fcc6b576d5655cbc6ff89204bb274",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1575,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_Http2SettingsAreValidatedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "e4cb14db76ad36222ba3f2c289674192",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2019,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_HttpOneOnlyHeadersAreRepresentedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6fddc18ec2c1fe8ed0c9e2d0d1d3de60",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1335,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_IdentityIsValidatedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "3cc82331e4074beecdb3155e1678d40a",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1167,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_MalformedDocumentsAreRefusedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "10bd978b1c6bd9fa337f2ee937abf7dd",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2195,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_PlacementCaseMapAndCodingsAreValidatedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "143915f0cf6bfc9c866df9ae573fa58b",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2390,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_StringsAreBoundedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "1e18b0788a2e3cc0373a2556e15b9674",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1419,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_TlsShapeIsValidatedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "edcfad89bf588c2f8b29ece44814870a",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2641,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_UnknownBuiltInIdIsNotFoundTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "ebb94f521bfa1623b4d26c9283010b36",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 694,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_ValidProfileLoadsFieldByFieldTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "e7a4b86675b1e144f9fad7e02d485faf",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1002,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_VersionStringsAreValidatedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d4cb7fe150a22a4b922915bf403fbc01",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 872,
+   "module": "utf_baselib_h2profiles",
+   "name": "BrowserProfiles_VersionStringsComposeByteExactTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "1574d23fa1080657c1aeb48ad51e587b",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestClientContracts.h",
@@ -13767,6 +13923,42 @@
    "namespaces": []
   },
   {
+   "body_sha": "47556213121cf42c017f373d1758fd61",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 558,
+   "module": "utf_baselib_h2profiles",
+   "name": "TlsNameRules_AgreesWithTheLinkedOpenSslTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5b18679376ecd280810ac55b5c5a6a04",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 466,
+   "module": "utf_baselib_h2profiles",
+   "name": "TlsNameRules_AnonymousAndNullSuitesAreRefusedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "69287b6866ff85ab9f37393a9abfb652",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 400,
+   "module": "utf_baselib_h2profiles",
+   "name": "TlsNameRules_PlainNameRuleIsTheBuildersRuleTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "6f75233aa4540a3eb7518857cd8f0a7d",
    "doc_sha": null,
    "file": "utf_baselib_http2/TestTlsPeerVerification.h",
@@ -19084,6 +19276,186 @@
   },
   {
    "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "namespace browserprofiles",
+   "line": 58,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "a05e4f89c92f34fb2b13b3fca57a8d8e"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "/**",
+   "line": 235,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "679238f0b43d1777ff2496363088828d"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline std::string replaced(",
+   "line": 240,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "78778769d9b61b9e9e22d6fc814eb388"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "/**",
+   "line": 258,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "277db8a9ed653c8cd9e90630e7e25b01"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "template",
+   "line": 262,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "380e3bab8fc48396ae9b421181d71deb"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline std::string quoted( SAA_in const std::string& text )",
+   "line": 284,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "4e12979e84ef18866391b0afe654eb69"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline std::string numbered( SAA_in const std::string& prefi",
+   "line": 289,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "2daf5adbb9788b30166cf38c23aba849"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "/**",
+   "line": 294,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "aa023fd6e88efc5946012ea461ad42c3"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline std::string stringArray( SAA_in const std::string& pr",
+   "line": 298,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "60a7667c6a5e2be95ab6b096b14624d1"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline bl::httpclient::BrowserProfile requireLoads( SAA_in c",
+   "line": 309,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "7847270df8ddb9f973d0ec163fca7f8b"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "/**",
+   "line": 314,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "fa91c2564d254d4ecf9e05c90ec40e1b"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline void requireRefused(",
+   "line": 318,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "de91a815fe5333e3ff641f4401779917"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline void requireRefused(",
+   "line": 330,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "e662bfd05bdfd007ec7fa2415c8eab42"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "/**",
+   "line": 338,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "d243b0815404b2a19ec7eb4ae410a9d3"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline void requireShapeRefused(",
+   "line": 349,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "6d521f919bfa822ca9954c2890e4d118"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline const bl::httpclient::HeaderProfileForKind& kindOf(",
+   "line": 371,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "5b2c8301af90fc3192c4b89d11dcbdea"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "inline std::string headerNames( SAA_in const bl::httpclient:",
+   "line": 383,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "e104d3096f93698c77331cf592ef75a5"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "guards": [],
+   "label": "} // browserprofiles",
+   "line": 396,
+   "module": "utf_baselib_h2profiles",
+   "ns": "utest",
+   "sha": "2623855a7574c15ea3674ee670b61e8f"
+  },
+  {
+   "conditional_only": false,
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
    "guards": [],
    "label": "/**",
@@ -24302,13 +24674,38 @@
   "utf_baselib_h2profiles": {
    "data_files": {},
    "data_literals": [
+    "0.001",
+    "0.05",
+    "0.1234",
+    "0.5",
     "0.8",
     "0.9",
+    "1.000",
+    "1.001",
+    "1.5",
     "TLSv1.2",
+    "capture.test",
     "example.com"
    ],
    "data_refs": [],
    "files": [
+    {
+     "includes": [
+      "<baselib/httpclient/BrowserProfiles.h>",
+      "<baselib/crypto/TlsNameRules.h>",
+      "<baselib/crypto/CryptoBase.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<utests/baselib/Utf.h>",
+      "<openssl/objects.h>",
+      "<openssl/ssl.h>",
+      "<cstddef>",
+      "<memory>",
+      "<string>",
+      "<utility>",
+      "<vector>"
+     ],
+     "path": "utf_baselib_h2profiles/TestBrowserProfiles.h"
+    },
     {
      "includes": [
       "<baselib/crypto/TlsClientProfile.h>",
@@ -24350,12 +24747,26 @@
       "<baselib/httpclient/PreCompiled.h>",
       "\"TestHttpClientProfiles.h\"",
       "\"TestTlsClientContext.h\"",
-      "\"TestTlsClientHello.h\""
+      "\"TestTlsClientHello.h\"",
+      "\"TestBrowserProfiles.h\""
      ],
      "path": "utf_baselib_h2profiles/UtfBaselibH2ProfilesMain.cpp"
     }
    ],
    "notes_cases": [
+    "BrowserProfiles_HeaderNamesAndValuesAreValidatedTests",
+    "BrowserProfiles_Http2PrioritiesAndWindowsAreValidatedTests",
+    "BrowserProfiles_Http2SettingsAreValidatedTests",
+    "BrowserProfiles_HttpOneOnlyHeadersAreRepresentedTests",
+    "BrowserProfiles_IdentityIsValidatedTests",
+    "BrowserProfiles_MalformedDocumentsAreRefusedTests",
+    "BrowserProfiles_PlacementCaseMapAndCodingsAreValidatedTests",
+    "BrowserProfiles_StringsAreBoundedTests",
+    "BrowserProfiles_TlsShapeIsValidatedTests",
+    "BrowserProfiles_UnknownBuiltInIdIsNotFoundTests",
+    "BrowserProfiles_ValidProfileLoadsFieldByFieldTests",
+    "BrowserProfiles_VersionStringsAreValidatedTests",
+    "BrowserProfiles_VersionStringsComposeByteExactTests",
     "HttpClientProfiles_BrowserProfileRoundTripTests",
     "HttpClientProfiles_RequiredPropertiesAreEnforcedOnLoadTests",
     "HttpClientProfiles_SettingValueSpansFullUint32RangeTests",
@@ -24369,7 +24780,10 @@
     "TlsClientHello_CapturedFromRealHandshakeTests",
     "TlsClientHello_GreaseAndAbsentExtensionsAreHandledTests",
     "TlsClientHello_Ja3AndJa4MatchHandWorkedValuesTests",
-    "TlsClientHello_MalformedMessagesAreRefusedTests"
+    "TlsClientHello_MalformedMessagesAreRefusedTests",
+    "TlsNameRules_AgreesWithTheLinkedOpenSslTests",
+    "TlsNameRules_AnonymousAndNullSuitesAreRefusedTests",
+    "TlsNameRules_PlainNameRuleIsTheBuildersRuleTests"
    ],
    "notes_index": true
   },
@@ -27951,6 +28365,13 @@
    "module": "utf_baselib_h2core2",
    "name": "utest",
    "sha": "9c1ec340d2181a6f182fbeea1ed7b669"
+  },
+  {
+   "file": "utf_baselib_h2profiles/TestBrowserProfiles.h",
+   "line": 56,
+   "module": "utf_baselib_h2profiles",
+   "name": "utest",
+   "sha": "bbb22fed72fe3240ab0095e865613dbf"
   },
   {
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
