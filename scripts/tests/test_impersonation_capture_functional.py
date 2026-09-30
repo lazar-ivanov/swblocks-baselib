@@ -421,6 +421,25 @@ class TestHttp2Capture:
         assert "send_error" not in meta["linger"] and "shutdown_error" not in meta["linger"]
         assert summary["checks"]["navigation_connections"] == [1]
 
+    def test_a_hello_that_names_no_host_is_a_problem(self, start_server, certificates):
+        """A1-4, F5(e) on the bytes: what an address typed on capture day looks like - no server name in the
+        hello - is reported, whatever --host was."""
+        server = start_server()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        context.set_alpn_protocols(["h2"])
+        tls = context.wrap_socket(socket.create_connection(("127.0.0.1", server.port), timeout=WAIT_SECONDS),
+                                  server_hostname=None)
+        client = H2Client(tls)
+        client.send(opening())
+        client.read_until(client.ended(5))
+        lingering_client_close(tls)
+        summary = server.stop()
+        assert summary["checks"]["sni_is_the_capture_host"] is False
+        assert summary["connections"][0]["sni"] is None
+        assert "PROBLEM: not every hello named capture.test in its SNI" in capture.format_report(summary)
+
     def test_every_connection_is_recorded_and_the_navigation_is_marked(self, start_server, certificates):
         """F5(b): a connection with no TLS at all, one whose client refused the certificate, one that
         navigated - three records, and the navigation's is the one marked."""
