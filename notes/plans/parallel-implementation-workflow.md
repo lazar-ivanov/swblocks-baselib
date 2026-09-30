@@ -63,6 +63,8 @@ task after it runs on Opus.*
    held a 179-line review written three days earlier and never committed, which nothing else in the
    tree mentioned. Rescue it into the records, prove every line arrived, keep a copy of the diff in
    the log directory, and only then clean the worktree.
+   **A new worktree also needs the git-ignored `projects/make/ci-init-env.mk`** copied from the main
+   worktree, or every `make` stops at `common.mk:8`. A lane worktree made on 2026-09-30 lacked it.
 4. **The state directory**, outside the repository, as `AGENTS.md` and the session-machinery rule
    require: the runbook (`RESUME.md`), the ledger (`LEDGER.md`), the briefs, the lane journals, the
    review files, and `logs/`. Nothing in it is ever committed.
