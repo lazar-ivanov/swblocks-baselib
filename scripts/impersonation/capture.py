@@ -1081,6 +1081,9 @@ def validate_host(host):
     else:
         raise CaptureError("%s is an IP literal, and a browser sends no SNI to one: use a hosts-file name "
                            "such as %s" % (host, DEFAULT_HOST))
+    if re.fullmatch(r"0x[0-9a-f]*|[0-9]+", name.rsplit(".", 1)[-1]):
+        raise CaptureError("%s ends in a number, which a browser reads as an IPv4 address: use a hosts-file "
+                           "name such as %s" % (host, DEFAULT_HOST))
     if name == "localhost" or name.endswith(".localhost") or "." not in name:
         raise CaptureError("%s is special-cased by browsers or not a full name: use a hosts-file name such as "
                            "%s" % (host, DEFAULT_HOST))

@@ -640,6 +640,13 @@ class TestControls:
         with pytest.raises(capture.CaptureError):
             capture.validate_host(host)
 
+    @pytest.mark.parametrize("host", ["127.1", "127.0.1", "0x7f.0.0.1", "0177.0.0.1", "10.0.0.010", "capture.0X1F"])
+    def test_a_name_ending_in_a_number_is_refused(self, host):
+        """A1-10: the ipaddress module refuses these spellings, but a browser's URL parser reads a host whose
+        last label is a number as an IPv4 address, and sends no SNI to it."""
+        with pytest.raises(capture.CaptureError, match="ends in a number"):
+            capture.validate_host(host)
+
     def test_a_hosts_file_name_is_accepted(self):
         assert capture.validate_host("Capture.Test.") == "capture.test"
 
