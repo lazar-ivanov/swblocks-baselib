@@ -473,11 +473,16 @@ namespace bl
                 {
                     const auto& brand = *brands[ i ];
 
-                    if( brand.brand().empty() || ! isPrintableAscii( brand.brand() ) )
+                    /*
+                     * Not empty: brand is a required property of the data model, which refuses
+                     * an empty string as not provided
+                     */
+
+                    if( ! isPrintableAscii( brand.brand() ) )
                     {
                         refuse(
                             at( "secChUaBrands", i ) + ".brand",
-                            "is empty or carries a character outside printable ASCII"
+                            "carries a character outside printable ASCII"
                             );
                     }
 
