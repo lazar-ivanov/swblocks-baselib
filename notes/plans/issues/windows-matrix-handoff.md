@@ -639,3 +639,26 @@ yet. L7-B's part 2 will make `crypto/CryptoBase.h` include the first.
   about 30.9 to 33.5 MB on x86 by the measured 1.15 to 1.25 ratio: inferred, not measured. Either way
   it is under the 40 MB target.
 - **F3. Whether it builds at x86 `ccl16` release.** As D3 above, only the build can tell.
+
+## L7-A, 2026-09-30 — what the capture tool owes Windows
+
+**Run only from a tip the maintainer has pushed** that contains L7-A's merge, `0219b6b`, and record the
+tip in the result.
+
+**What L7-A changed:** `scripts/impersonation/capture.py` and its README. It is a standard-library
+Python tool the maintainer runs on capture day, on Windows and on a Mac, with its tests in
+`scripts/tests/test_impersonation_capture_unit.py` and `…_functional.py`. It touches nothing the C++
+matrix builds.
+
+**What Linux established:** the whole Python suite on the integrated tree, 749 passed, 2 skipped (the
+Windows-only `debug_harness` cases). The two impersonation files hold 135 unit and 21 functional
+cases, over loopback only.
+
+**What Linux cannot settle:**
+- **G1. Run the two impersonation test files on Windows**, through the procedure in
+  `scripts/devenv7/AGENTS.md`, "Python Test Suite on Windows". Two code paths exist only there and are
+  untested:
+  - the CLI test's `CTRL_BREAK_EVENT` branch;
+  - the tool's `SO_LINGER` packing.
+
+  Record the result per file. A failure there is a capture-day failure found early.
