@@ -77,18 +77,20 @@ namespace bl
          *   PS  the pseudo-header order, one letter each, comma separated: "m (:method),
          *       p (:path), a (:authority), s (:scheme)"
          *
-         * Its worked example, which a test here reproduces from frames built by hand:
+         * Its one string of all four parts - the worked example with the pseudo-header order
+         * section 4.0 adds to it - which a test here reproduces from frames built by hand:
          *
          *   1:65536;4:131072;5:16384|12517377|3:0:0:201,5:0:0:101,7:0:0:1,9:0:7:1,11:0:3:1|m,p,a,s
          *
-         * EACH CHOICE THE PAPER LEAVES TO ITS READER, AND WHAT DECIDED IT:
+         * EACH DETAIL THE DEFINITIONS ABOVE LEAVE OPEN, AND WHAT SETTLES IT:
          *
          *  - THE WEIGHT IS THE WIRE OCTET PLUS ONE - the 1 to 256 weight of RFC 7540 6.3, "Add
          *    one to the value to obtain a weight between 1 and 256". RFC 9113 deprecates that
          *    scheme and its 6.3 keeps only "An unsigned 8-bit integer", so it is RFC 7540 that
-         *    defines what the paper counts. The paper does not say so in words, but its example
-         *    does: it renders Firefox 53's priority tree as 201, 101, 1, 1 and 1, and Firefox of
-         *    that date writes the octets 200, 100, 0, 0 and 0 (gecko-dev
+         *    defines what the paper counts. The paper says so in words - section 3.0 gives the
+         *    weight's "values are between 1 and 256", which an octet holds only as itself plus
+         *    one - and its example agrees: it renders Firefox 53's priority tree as 201, 101, 1,
+         *    1 and 1, where Firefox's source writes the octets 200, 100, 0, 0 and 0 (gecko-dev
          *    a06d325b04282b2bace31f8045561c22e5b85875, netwerk/protocol/http/Http2Session.cpp,
          *    CreatePriorityNode). All three implementations below add the one. The parts keep
          *    the octet, as Http2Profile does, and only render( ) adds it
@@ -102,7 +104,7 @@ namespace bl
          *
          * Three open implementations were read at the source. The first two follow the paper;
          * none of them agrees with the others on everything, so a string from one of them is
-         * compared with a string from here knowing where they part:
+         * compared with a string from here knowing at least these differences:
          *
          *  - TrackMe, the server behind tls.peet.ws - github.com/pagpeter/TrackMe at
          *    9d2e865ad663ae114e28c33ddc08a4797b4ecaa8, pkg/http/fingerprint_h2.go and
@@ -112,14 +114,16 @@ namespace bl
          *  - fingerproxy - github.com/wi1dcard/fingerproxy at
          *    bcda1920cb3665dedcafebef8eaf008e74393fa9, pkg/metadata/http2.go and
          *    pkg/http2/server.go. The paper's format, but the increment is written "%02d", so a
-         *    present increment below ten gains a leading zero; S is the LAST SETTINGS frame; and
-         *    each HEADERS frame's own priority fields are added to P
+         *    present increment below ten gains a leading zero; S is the LAST SETTINGS frame; WU
+         *    is the first non-zero WINDOW_UPDATE on ANY stream; each HEADERS frame's own priority
+         *    fields are added to P; and its MaxPriorityFrames parameter can cut P short
          *  - nginx-ssl-fingerprint - github.com/phuslu/nginx-ssl-fingerprint at
          *    e72f932b630717939b508b58e5b4a48ec014adf3, src/nginx_ssl_fingerprint.c and
          *    patches/release-1.30.0.patch. An absent WINDOW_UPDATE is written '0' and an absent
-         *    P part empty; P is built from the HEADERS frames' priority fields and never from
-         *    PRIORITY frames; and a setting identifier and a stream identifier are kept in one
-         *    octet
+         *    P part empty; S runs on through every SETTINGS frame read before the fingerprint is
+         *    taken, up to six entries; WU is the LAST WINDOW_UPDATE on the connection; P is
+         *    built from the HEADERS frames' priority fields and never from PRIORITY frames; and
+         *    a setting identifier and a stream identifier are kept in one octet
          *
          * So a client which puts priority fields on HEADERS - which Http2Profile can, and which
          * the design's Chrome shape does - gets a different P part from fingerproxy and from
@@ -146,8 +150,8 @@ namespace bl
          *    CONTINUATION frames which complete it - once HPACK has decoded all of it. Only
          *    the four request pseudo-headers of RFC 9113 8.3.1 have a letter, so a block
          *    carrying another, carrying one twice, or carrying one after a regular field is
-         *    refused: those are exactly the malformations the session refuses in a request it
-         *    reads (8.3 and 8.3.1), and with any of them "the order" stops being one. Whether
+         *    refused: each is a malformation the session also refuses in a request it reads
+         *    (8.3 and 8.3.1), and with any of them "the order" stops being one. Whether
          *    the required ones are present is not judged, because the order is well defined
          *    without them: a request with no :authority renders m,s,p
          *  - the first HEADERS frame's own priority fields are kept in the parts and NOT
@@ -178,6 +182,15 @@ namespace bl
          *    all of them so that no frame is refused for a size only the server's SETTINGS could
          *    have allowed. What is accumulated is bounded by the limits below, and each breach
          *    is a refusal naming the bound
+         *
+         * THE BOUNDS ARE THE SESSION'S RECEIVE-SIDE DEFAULTS, and nothing holds what the session
+         * SENDS to them - it treats SETTINGS_MAX_HEADER_LIST_SIZE as advisory (Session.h,
+         * applyPeerSettings). So an opening a session did produce is refused when its first
+         * block decodes to more than 64 KB, compresses to more than 256 KB, spans more than 64
+         * CONTINUATION frames or opens with a size update above 64 KB - or when a session given
+         * a larger control-frame bound sends more PRIORITY frames than the default admits. A
+         * caller reporting on its own connection treats such a refusal as "not available", and
+         * never as a failure of the connection
          */
 
         /**
@@ -252,7 +265,7 @@ namespace bl
             {
                 /*
                  * The first header block, compressed, and the CONTINUATION frames it may span -
-                 * the design's 4.6 rows, as the session applies them to every block it reads
+                 * the design's 4.6 rows - the defaults the session applies to every block it reads
                  */
 
                 MAX_FIRST_HEADER_BLOCK_SIZE             =
@@ -290,8 +303,8 @@ namespace bl
                 /*
                  * A PRIORITY frame is nine octets of header and five of payload, and the session
                  * refuses an opening whose control frames exceed its queued control-frame bound
-                 * (design 4.6; SessionT::checkControlQueueBound). That bound therefore admits at
-                 * most this many PRIORITY frames in a session's opening, and it is the bound here
+                 * (design 4.6; SessionT::checkControlQueueBound). At its default that bound admits
+                 * at most this many PRIORITY frames in an opening, and it is the bound here
                  */
 
                 PRIORITY_FRAME_SIZE                     = 14U,
@@ -399,6 +412,10 @@ namespace bl
             {
                 return m_isComplete;
             }
+
+            /**
+             * @brief The parts read; a programming error before isComplete( )
+             */
 
             const Http2FingerprintParts& parts() const
             {
