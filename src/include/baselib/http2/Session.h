@@ -964,7 +964,7 @@ namespace bl
              * @brief Opens a stream and queues its header block - returns the stream identifier
              *
              * The pseudo-headers are emitted in the profile's order (design 6.4), defaulting to
-             * the RFC 9113 8.3.1 order when a profile names none
+             * m,a,s,p when a profile names none - Chrome's order; RFC 9113 8.3.1 lists m,s,a,p
              */
 
             std::uint32_t submitRequest( SAA_in const SessionRequest& request )
@@ -3794,8 +3794,8 @@ namespace bl
                 if( order.empty() )
                 {
                     /*
-                     * RFC 9113 8.3.1 lists them in this order and a profile which names none gets
-                     * it; the browsers differ, which is exactly why the order is a profile field
+                     * No RFC fixes an order - RFC 9113 8.3.1 merely lists m,s,a,p - so a profile
+                     * naming none gets Chrome's m,a,s,p; browsers differ, hence a profile field
                      */
 
                     order.push_back( Http2PseudoHeader::Method );
