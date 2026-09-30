@@ -644,6 +644,133 @@ class TestFollowers:
             capture.H1Follower().feed(head)
 
 
+# ========== The session checks, on stored bytes built here ==========
+
+CAPTURE_HELLO = client_hello(0x0303, [0x0A0A, 0x1301, 0x1302], [
+    extension(0x2A2A, b""), server_name("capture.test"), u16_list(0x000A, [0x3A3A, 0x001D]),
+    alpn([b"h2", b"http/1.1"]), supported_versions([0x4A4A, 0x0304, 0x0303]), u16_list(0x000D, [0x0403])])
+
+NAVIGATION_FIELDS = [(":method", "GET"), (":authority", "capture.test"), (":scheme", "https"), (":path", "/"),
+                     ("sec-fetch-site", "none"), ("sec-fetch-mode", "navigate"), ("sec-fetch-user", "?1"),
+                     ("sec-fetch-dest", "document"), ("user-agent", "synthetic/1.0"), ("accept-language", "en")]
+
+TYPED_HTTP1_NAVIGATION = (b"GET / HTTP/1.1\r\nHost: capture.test\r\nSec-Fetch-Site: none\r\nSec-Fetch-Mode: navigate\r\n"
+                          b"Sec-Fetch-User: ?1\r\nSec-Fetch-Dest: document\r\n\r\n")
+
+
+def priority_bytes(dependency, weight_on_wire, exclusive):
+    return (dependency | (0x80000000 if exclusive else 0)).to_bytes(4, "big") + bytes([weight_on_wire])
+
+
+def h2_plain(settings=((1, 65536), (2, 0), (4, 6291456)), window=15663105, priorities=(), before_headers=b"",
+             headers_priority=(0, 255, True), requests=(NAVIGATION_FIELDS,)):
+    """A client's decrypted HTTP/2 stream: the preface, SETTINGS, WINDOW_UPDATE and PRIORITY frames, anything
+    else before the first HEADERS, then one request per stream."""
+    out = capture.H2_PREFACE + frame(4, 0, 0, b"".join(k.to_bytes(2, "big") + v.to_bytes(4, "big") for k, v in settings))
+    if window is not None:
+        out += frame(8, 0, 0, window.to_bytes(4, "big"))
+    for stream, dependency, weight_on_wire, exclusive in priorities:
+        out += frame(2, 0, stream, priority_bytes(dependency, weight_on_wire, exclusive))
+    out += before_headers
+    for index, fields in enumerate(requests):
+        block = capture.encode_header_block(fields)
+        if headers_priority is None:
+            out += frame(1, 0x05, 1 + 2 * index, block)
+        else:
+            out += frame(1, 0x25, 1 + 2 * index, priority_bytes(*headers_priority) + block)
+    return out
+
+
+def write_session(root, connections, run="h2"):
+    """A capture directory as the tool writes one - session.json, and per connection the raw records, the
+    decrypted stream and meta.json - analysed from those files alone. Connection N's requests arrive in second N."""
+    capture.write_json(str(root / capture.SESSION_FILE), {"host": "capture.test", "pass": run, "browser": "synthetic"})
+    for number, connection in enumerate(connections, start=1):
+        directory = root / ("conn-%04d" % number)
+        directory.mkdir()
+        (directory / capture.RAW_FILE).write_bytes(records(connection.get("hello", CAPTURE_HELLO), [])
+                                                    + CHANGE_CIPHER_SPEC + APPLICATION_DATA)
+        plain = connection.get("plain", h2_plain() if run == "h2" else TYPED_HTTP1_NAVIGATION)
+        (directory / capture.PLAIN_FILE).write_bytes(plain)
+        keys = range(1, 64, 2) if run == "h2" else range(0, 32)
+        capture.write_json(str(directory / capture.META_FILE), {
+            "connection": number, "handshake": "complete", "tls_version": "TLSv1.3",
+            "alpn": connection.get("alpn", "h2" if run == "h2" else "http/1.1"),
+            "request_times": {str(key): "2026-09-30T00:00:%02d.%03d+00:00" % (number, key) for key in keys},
+            "linger": {"plain_offset": len(plain)}})
+    return capture.analyse_session(str(root))
+
+
+class TestVisits:
+    """A1-1 and P-2: an h2 run needs two visits, each on a connection of its own; visit 1 is the profile
+    source, and every later visit must agree with it on what the browser chooses."""
+
+    def test_one_visit_is_a_problem(self, tmp_path):
+        summary = write_session(tmp_path, [{}])
+        assert summary["checks"]["visits_on_connections_of_their_own"] == 1
+        assert "PROBLEM: only 1 visit(s) made a new connection" in capture.format_report(summary)
+
+    def test_two_navigations_on_one_connection_are_a_problem(self, tmp_path):
+        summary = write_session(tmp_path, [{"plain": h2_plain(requests=(NAVIGATION_FIELDS, NAVIGATION_FIELDS))}])
+        assert summary["checks"]["connections_with_more_than_one_navigation"] == [1]
+        report = capture.format_report(summary)
+        assert "PROBLEM: more than one navigation on connection(s) [1]" in report
+        assert "PROBLEM: only 1 visit(s) made a new connection" in report
+
+    def test_two_visits_that_agree(self, tmp_path):
+        """Timing and HTTP/2 GREASE aside: the second connection sat idle, so the ACK and a PING come before its
+        HEADERS, and its GREASE setting and frame have other random values."""
+        first = h2_plain(settings=((1, 65536), (0x1A2A, 7), (4, 6291456)), before_headers=frame(0x2A, 0, 0, b"g"))
+        second = h2_plain(settings=((1, 65536), (0x5AFA, 99), (4, 6291456)),
+                          before_headers=frame(4, 1, 0, b"") + frame(6, 0, 0, b"pingping")
+                          + frame(0x0B + 0x1F * 3, 0, 0, b"gg"))
+        summary = write_session(tmp_path, [{"plain": first}, {"plain": second}])
+        checks = summary["checks"]
+        assert checks["visits_on_connections_of_their_own"] == 2
+        assert checks["profile_source_connection"] == 1 and checks["consistency_check_connections"] == [2]
+        assert checks["visit_agreement"] == [{"visit": 2, "connection": 2, "compared_with": 1, "differs": [],
+                                              "header_order_differs": False}]
+        report = capture.format_report(summary)
+        assert "PROBLEM" not in report and "Note:" not in report
+
+    @pytest.mark.parametrize("change, element", [
+        ({"settings": ((1, 65536), (2, 0), (4, 131072))}, "settings"),
+        ({"settings": ((2, 0), (1, 65536), (4, 6291456))}, "settings"),
+        ({"settings": ((1, 65536), (2, 0), (4, 6291456), (0x0A0A, 1))}, "settings"),
+        ({"settings": ((0x1A1A, 1), (1, 65536), (2, 0), (4, 6291456))}, "settings"),
+        ({"window": 12517377}, "connection WINDOW_UPDATE"),
+        ({"window": None}, "connection WINDOW_UPDATE"),
+        ({"priorities": ((3, 0, 200, False),)}, "PRIORITY frames"),
+        ({"headers_priority": (0, 219, False)}, "HEADERS priority"),
+        ({"headers_priority": None}, "HEADERS priority"),
+        ({"requests": ([NAVIGATION_FIELDS[i] for i in (0, 3, 1, 2)] + NAVIGATION_FIELDS[4:],)}, "pseudo-header order"),
+        ({"before_headers": frame(0x10, 0, 0, b"\x00\x00\x00\x01u=0")}, "opening frames"),
+    ], ids=["a-setting-value", "the-setting-order", "a-grease-setting-added", "a-grease-setting-moved", "the-window",
+            "no-window", "a-priority-frame", "the-headers-priority", "no-headers-priority", "the-pseudo-header-order",
+            "another-frame-first"])
+    def test_visits_that_disagree_are_a_problem(self, tmp_path, change, element):
+        summary = write_session(tmp_path, [{"plain": h2_plain(settings=((1, 65536), (2, 0), (4, 6291456)))},
+                                           {"plain": h2_plain(**change)}])
+        assert element in summary["checks"]["visit_agreement"][0]["differs"]
+        assert ("PROBLEM: visit 2 (connection 2) disagrees with visit 1 (connection 1) on: "
+                in capture.format_report(summary))
+
+    def test_a_different_header_order_is_a_note(self, tmp_path):
+        reordered = NAVIGATION_FIELDS[:4] + NAVIGATION_FIELDS[4:][::-1]
+        summary = write_session(tmp_path, [{"plain": h2_plain()}, {"plain": h2_plain(requests=(reordered,))}])
+        visit = summary["checks"]["visit_agreement"][0]
+        assert visit["differs"] == [] and visit["header_order_differs"] is True
+        report = capture.format_report(summary)
+        assert ("Note: the navigation's header order differs between visit 1 (connection 1) and visit 2 "
+                "(connection 2)" in report)
+        assert "PROBLEM" not in report
+
+    def test_the_http1_run_is_one_visit(self, tmp_path):
+        summary = write_session(tmp_path, [{}], run="http/1.1")
+        assert summary["checks"]["navigation_connections"] == [1]
+        assert "PROBLEM" not in capture.format_report(summary)
+
+
 # ========== The controls that need no socket ==========
 
 class TestControls:

@@ -830,7 +830,8 @@ class H2Follower:
 
     def _frame(self, offset, frame_type, flags, stream, payload):
         entry = {"offset": offset, "type": FRAME_NAMES.get(frame_type, "UNKNOWN_0x%02x" % frame_type),
-                 "stream": stream, "flags": _flag_names(frame_type, flags), "length": len(payload)}
+                 "code": frame_type, "stream": stream, "flags": _flag_names(frame_type, flags),
+                 "length": len(payload)}
         self.frames.append(entry)
         if self.block is not None and frame_type != CONTINUATION:
             raise ProtocolError(PROTOCOL_ERROR, "a %s frame inside a header block" % entry["type"])
@@ -1614,13 +1615,64 @@ def analyse_connection(directory):
     return result
 
 
+def is_h2_grease_setting(identifier):
+    """draft-bishop-httpbis-grease reserves setting ids 0x?a?a; their values are random per connection."""
+    return identifier & 0x0F0F == 0x0A0A
+
+
+def is_h2_grease_frame_type(frame_type):
+    """... and frame types 0x0b + 0x1f * N."""
+    return frame_type >= 0x0B and (frame_type - 0x0B) % 0x1F == 0
+
+
+def _navigation_of(analysed):
+    section = analysed.get("http2") or analysed.get("http1") or {}
+    return next((request for request in section.get("requests", [])
+                 if request["kind"] == "navigation" and not request["after_close_began"]), None)
+
+
+def visit_shape(analysed):
+    """
+    What the browser chose on one visit's connection, as the visits are compared (F5(f)): never the recorded
+    opening, whose ACK and PING positions are timing; and HTTP/2 GREASE as JA4 treats TLS GREASE - a reserved
+    setting by its presence and position, a reserved frame type dropped.
+    """
+    h2 = analysed.get("http2") or {}
+    navigation = _navigation_of(analysed) or {}
+    before = []
+    for frame in h2.get("frames", []):
+        if frame["type"] == "HEADERS":
+            break
+        if is_h2_grease_frame_type(frame["code"]) or frame["type"] == "PING" or (
+                frame["type"] == "SETTINGS" and "ACK" in frame["flags"]):
+            continue
+        before.append(frame)
+    priority = (navigation.get("header_block") or {}).get("priority")
+    return {
+        "settings": [["GREASE"] if is_h2_grease_setting(setting["id"]) else [setting["id"], setting["value"]]
+                     for setting in h2.get("settings") or []],
+        "connection WINDOW_UPDATE": next((frame["increment"] for frame in before
+                                          if frame["type"] == "WINDOW_UPDATE" and frame["stream"] == 0), None),
+        "PRIORITY frames": [[frame["stream"], frame["priority"]["depends_on"], frame["priority"]["weight"],
+                             frame["priority"]["exclusive"]] for frame in before if frame["type"] == "PRIORITY"],
+        "opening frames": [frame["type"] for frame in before],
+        "HEADERS priority": [priority["depends_on"], priority["weight"], priority["exclusive"]] if priority else None,
+        "pseudo-header order": navigation.get("pseudo_header_order"),
+    }
+
+
+def _header_names(analysed):
+    return [name.lower() for name, _ in (_navigation_of(analysed) or {}).get("headers", [])]
+
+
 def analyse_session(out_dir):
     session = read_json(os.path.join(out_dir, SESSION_FILE)) or {}
     directories = sorted(name for name in os.listdir(out_dir)
                          if name.startswith("conn-") and os.path.isdir(os.path.join(out_dir, name)))
-    rows, requests, ja4_values = [], [], {}
+    rows, requests, ja4_values, analysed_by_number = [], [], {}, {}
     for directory in directories:
         analysed = analyse_connection(os.path.join(out_dir, directory))
+        analysed_by_number[analysed["connection"]] = analysed
         meta, hello = analysed["meta"], analysed.get("hello")
         exchanges = (analysed.get("http2") or analysed.get("http1") or {}).get("requests", [])
         if hello is not None:
@@ -1641,14 +1693,26 @@ def analyse_session(out_dir):
                              "received_at": request["received_at"], "after_close_began": request["after_close_began"]})
     requests.sort(key=lambda request: (request["received_at"] is None, request["received_at"] or "",
                                        str(request["connection"])))
-    navigations = []
+    navigations, navigation_count = [], {}
     for request in requests:
         if request["kind"] == "navigation" and not request["after_close_began"]:
             if request["connection"] not in navigations:
                 navigations.append(request["connection"])
+            navigation_count[request["connection"]] = navigation_count.get(request["connection"], 0) + 1
     by_number = {row["connection"]: row for row in rows}
     hellos = [row for row in rows if row["ja4"]]
+    # The visits made on connections of their own, in order: visit 1 is the profile source, and every later
+    # one is compared with it (P-2)
     sources = [number for number in navigations if by_number[number]["ja4"] and not by_number[number]["pre_shared_key"]]
+    visits = []
+    if session.get("pass", "h2") == "h2" and sources:
+        shape = visit_shape(analysed_by_number[sources[0]])
+        for index, number in enumerate(sources[1:], start=2):
+            other = visit_shape(analysed_by_number[number])
+            visits.append({"visit": index, "connection": number, "compared_with": sources[0],
+                           "differs": [key for key in shape if shape[key] != other[key]],
+                           "header_order_differs": _header_names(analysed_by_number[sources[0]])
+                           != _header_names(analysed_by_number[number])})
     checks = {
         "connections_recorded": len(rows),
         "hellos_recorded": len(hellos),
@@ -1657,6 +1721,11 @@ def analyse_session(out_dir):
         "hellos_refused_as_profile_source": [row["connection"] for row in rows if row["pre_shared_key"]],
         "navigation_connections": navigations,
         "profile_source_connection": sources[0] if sources else None,
+        "consistency_check_connections": sources[1:],
+        "visits_on_connections_of_their_own": len(sources),
+        "connections_with_more_than_one_navigation": [number for number in navigations
+                                                      if navigation_count[number] > 1],
+        "visit_agreement": visits,
         "kinds_missing_from_navigation_connection": {
             str(number): [kind for kind in REQUIRED_KINDS if kind not in by_number[number]["kinds"]]
             for number in navigations},
@@ -1692,6 +1761,19 @@ def format_report(summary):
             number, checks["alpn_selected"][str(number)],
             "the script, the image and the fetch on the same connection" if not missing
             else "not on this connection: " + ", ".join(missing)))
+    if session.get("pass", "h2") == "h2" and checks["visits_on_connections_of_their_own"] < 2:
+        lines.append("PROBLEM: only %d visit(s) made a new connection; visit 2 must start the browser anew "
+                     "(README 2.2, step 4)" % checks["visits_on_connections_of_their_own"])
+    if checks["connections_with_more_than_one_navigation"]:
+        lines.append("PROBLEM: more than one navigation on connection(s) %s: the browser was not quit between the "
+                     "visits, or the page was reloaded" % checks["connections_with_more_than_one_navigation"])
+    for visit in checks["visit_agreement"]:
+        if visit["differs"]:
+            lines.append("PROBLEM: visit %d (connection %s) disagrees with visit 1 (connection %s) on: %s" % (
+                visit["visit"], visit["connection"], visit["compared_with"], ", ".join(visit["differs"])))
+        if visit["header_order_differs"]:
+            lines.append("Note: the navigation's header order differs between visit 1 (connection %s) and visit %d "
+                         "(connection %s)" % (visit["compared_with"], visit["visit"], visit["connection"]))
     if not checks["sni_is_the_capture_host"]:
         lines.append("PROBLEM: not every hello named %s in its SNI" % session.get("host"))
     for key, text in (("hello_retry_requests", "a HelloRetryRequest on connection(s)"),

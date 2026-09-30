@@ -748,5 +748,6 @@ class TestCertificatesAndCommandLine:
         assert ssl.OPENSSL_VERSION in text and "https://capture.test:%d/" % port in text
         assert "JA4 identical across every hello: yes" in text
         assert "Navigation on connection 1, ALPN h2: not on this connection: subresource-script" in text
+        assert "PROBLEM: only 1 visit(s) made a new connection" in text
         summary = read_json(out / "summary.json")
         assert summary["session"]["browser"] == "Test Client 1.0" and summary["checks"]["navigation_connections"] == [1]
