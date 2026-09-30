@@ -897,15 +897,19 @@ class TestControls:
     def test_a_hosts_file_name_is_accepted(self):
         assert capture.validate_host("Capture.Test.") == "capture.test"
 
-    def test_no_key_is_ever_written_inside_a_git_work_tree(self, tmp_path):
+    def test_no_key_is_ever_written_inside_a_repository(self, tmp_path):
         """No key is ever committed: certs refuses a directory any repository contains, before writing."""
         (tmp_path / "repository" / ".git").mkdir(parents=True)
         target = tmp_path / "repository" / "scripts" / "certs"
         with pytest.raises(capture.CaptureError, match="inside a git work tree"):
             capture.make_certificates(capture.DEFAULT_HOST, str(target))
         assert not target.exists()
-        assert capture.inside_git_work_tree(str(REPOSITORY / "scripts"))
         assert not capture.inside_git_work_tree(str(tmp_path))
+
+    def test_this_checkout_is_a_git_work_tree(self):
+        """Apart from the case above, so that a copy of the tests outside any checkout - a mutation run's scratch
+        tree - can deselect this one alone and keep the refusal above."""
+        assert capture.inside_git_work_tree(str(REPOSITORY / "scripts"))
 
     def test_a_symlink_into_a_repository_is_followed(self, tmp_path):
         """A1-11: a --dir reached through a symlink into a checkout is inside it, and is refused."""
