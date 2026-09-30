@@ -34,6 +34,7 @@ import re
 import signal
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import threading
@@ -363,6 +364,24 @@ class TestHttp2Capture:
         hello = read_json(Path(server.out_dir) / "conn-0002" / "connection.json")["hello"]
         assert hello["pre_shared_key"] and not hello["profile_source"]["eligible"]
         assert "PROBLEM: JA4 differs" in capture.format_report(summary)
+
+    def test_a_client_that_resets_is_recorded_as_such_and_not_as_an_error(self, start_server, certificates):
+        """A browser quitting may reset its sockets. That is the client going away, not a fault of the tool:
+        no error and no traceback in the record, and nothing more sent to a peer that is gone."""
+        server = start_server()
+        tls, _ = navigate(server.port, client_context(certificates))
+        tls.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("HH" if sys.platform == "win32" else "ii", 1, 0))
+        tls.close()                                 # SO_LINGER 0: the close is a reset
+        connection = server.connections[0]
+        connection.join(WAIT_SECONDS)               # the tool finishes with it on its own, before any stop
+        assert not connection.is_alive()
+        summary = server.stop()
+        meta = read_json(Path(server.out_dir) / "conn-0001" / "meta.json")
+        assert "error" not in meta and "traceback" not in meta
+        assert meta["ended_by"] == "the client reset the connection"
+        assert meta["linger"]["outcome"] == "the client reset the connection"
+        assert "send_error" not in meta["linger"] and "shutdown_error" not in meta["linger"]
+        assert summary["checks"]["navigation_connections"] == [1]
 
     def test_every_connection_is_recorded_and_the_navigation_is_marked(self, start_server, certificates):
         """F5(b): a connection with no TLS at all, one whose client refused the certificate, one that

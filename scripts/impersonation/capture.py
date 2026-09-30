@@ -1111,6 +1111,7 @@ class Connection(threading.Thread):
                      "request_times": {}}
         self.tls = self.incoming = self.outgoing = self.follower = None
         self.client_closed = self.goaway_sent = self.size_update_due = False
+        self.client_gone = None                     # "closed" at its end of stream, "reset" at a reset or abort
         self.peer_initial_window, self.peer_max_frame, self.connection_window = 65535, MAX_FRAME_SIZE, 65535
         self.windows, self.pending = {}, {}
 
@@ -1143,8 +1144,15 @@ class Connection(threading.Thread):
         ready, _, _ = select.select([self.sock], [], [], timeout)
         if not ready:
             return None
-        data = self.sock.recv(65536)
-        if data:
+        try:
+            data = self.sock.recv(65536)
+        except (ConnectionResetError, ConnectionAbortedError):
+            # a browser quitting may reset its sockets; on Windows a close can also arrive as an abort
+            self.client_gone = "reset"
+            return b""
+        if not data:
+            self.client_gone = self.client_gone or "closed"
+        else:
             self.raw.write(data)
             self.raw.flush()
             had_hello = self.records.hello is not None
@@ -1153,6 +1161,9 @@ class Connection(threading.Thread):
                 with open(os.path.join(self.directory, HELLO_FILE), "wb") as handle:
                     handle.write(self.records.hello)
         return data
+
+    def _gone_text(self):
+        return "the client reset the connection" if self.client_gone == "reset" else "the client closed the connection"
 
     def _next_data(self):
         while True:
@@ -1184,8 +1195,11 @@ class Connection(threading.Thread):
 
     def _flush(self):
         data = self.outgoing.read()
-        if data:
-            self.sock.sendall(data)
+        if data and self.client_gone is None:
+            try:
+                self.sock.sendall(data)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                self.client_gone = "reset"          # the client is gone; nothing more is sent
 
     def _handshake(self):
         self.incoming, self.outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
@@ -1199,7 +1213,7 @@ class Connection(threading.Thread):
                 data = self._next_data()
                 if not data:
                     self.meta["handshake"] = "incomplete: " + (
-                        "the tool was stopped" if data is None else "the client closed the connection")
+                        "the tool was stopped" if data is None else self._gone_text())
                     return False
                 self.incoming.write(data)
             except ssl.SSLError as error:
@@ -1234,6 +1248,9 @@ class Connection(threading.Thread):
                     self._on_h2_event(event)
                 self._pump()
             self._flush()
+            if self.client_gone is not None:
+                self.meta["ended_by"] = self._gone_text()
+                return
             if self.client_closed:
                 self.meta["ended_by"] = "the client sent close_notify"
                 return
@@ -1245,7 +1262,7 @@ class Connection(threading.Thread):
                 self.meta["ended_by"] = "the tool was stopped"
                 return self._goaway(NO_ERROR)
             if not data:
-                self.meta["ended_by"] = "the client closed the connection"
+                self.meta["ended_by"] = self._gone_text()
                 return
             self.incoming.write(data)
 
@@ -1337,6 +1354,9 @@ class Connection(threading.Thread):
                         self.meta["ended_by"] = "the tool was stopped (Connection: close)"
                         return self._flush()
             self._flush()
+            if self.client_gone is not None:
+                self.meta["ended_by"] = self._gone_text()
+                return
             if self.client_closed:
                 self.meta["ended_by"] = "the client sent close_notify"
                 return
@@ -1355,7 +1375,7 @@ class Connection(threading.Thread):
                     return
                 continue
             if not data:
-                self.meta["ended_by"] = "the client closed the connection"
+                self.meta["ended_by"] = self._gone_text()
                 return
             self.incoming.write(data)
 
@@ -1371,7 +1391,8 @@ class Connection(threading.Thread):
         self.stopping.set()
         linger = {"bound_seconds": self.server.linger_seconds, "plain_offset": self.plain_length}
         decrypting = self.meta.get("handshake") == "complete"
-        if self.tls is not None:
+        start, outcome, raw_bytes = time.monotonic(), "the bound was reached", 0
+        if self.client_gone is None and self.tls is not None:
             try:
                 self.tls.unwrap()
             except (ssl.SSLError, ValueError):
@@ -1380,12 +1401,13 @@ class Connection(threading.Thread):
                 self._flush()
             except OSError as error:
                 linger["send_error"] = str(error)
-        try:
-            self.sock.shutdown(socket.SHUT_WR)
-        except OSError as error:
-            linger["shutdown_error"] = str(error)
-        start, outcome, raw_bytes = time.monotonic(), "the bound was reached", 0
-        while True:
+        if self.client_gone is None:
+            try:
+                self.sock.shutdown(socket.SHUT_WR)
+            except OSError as error:
+                linger["shutdown_error"] = str(error)
+        # A client already gone has nothing more to send; there is no one to linger for
+        while self.client_gone is None:
             remaining = self.server.linger_seconds - (time.monotonic() - start)
             if remaining <= 0:
                 break
@@ -1397,7 +1419,6 @@ class Connection(threading.Thread):
             if data is None:
                 continue
             if not data:
-                outcome = "the client closed"
                 break
             raw_bytes += len(data)
             if decrypting:
@@ -1408,6 +1429,10 @@ class Connection(threading.Thread):
                         self.follower.feed(plaintext)
                 except (ssl.SSLError, ProtocolError):
                     decrypting = False
+        if self.client_gone is not None:
+            # a reset after the client's own close_notify or end of stream is still the client closing
+            closed = self.client_gone == "closed" or self.client_closed
+            outcome = "the client closed" if closed else "the client reset the connection"
         linger.update(outcome=outcome, seconds=round(time.monotonic() - start, 3), raw_bytes=raw_bytes,
                       plain_bytes=self.plain_length - linger["plain_offset"])
         self.meta["linger"] = linger
