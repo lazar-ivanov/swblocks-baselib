@@ -671,6 +671,11 @@ All of this is `bl::http2`, sans-I/O, role-neutral. RFC 9113 throughout, RFC 754
   in sync - but discards the fields, and the stream is reset. Separately, compressed header-block
   bytes and `CONTINUATION` frame count per block are capped; exceeding either is a connection error
   with `ENHANCE_YOUR_CALM`.
+  *2026-09-30, found by L7-D's lane:* this bounds the fields a block decodes to. It does not bound what
+  the decoder holds while it consumes the block. The dynamic table keeps the entries a block evicts
+  until the block ends, so that it can roll the block back. The memory held within one block is
+  therefore not bounded by the table's size. The fix is Decision 4 of
+  `http2-l7-execution-plan.md` §3, pending the maintainer.
 - Encoder: a policy object decides per field between indexed, incremental-indexed, literal and
   never-indexed, and whether Huffman is shorter. Cookie crumbling (RFC 9113 section 8.2.3) is a
   profile switch, since browsers do it.

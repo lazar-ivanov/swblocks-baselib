@@ -586,3 +586,27 @@ debug over the 22 affected modules, green 44 of 44 on `bb8d320`):
 - **D3. Whether it builds at x86 `ccl16` release.** Object size does not govern that combination, so
   the size above says nothing about it (`src/utests/AGENTS.md`, "The x86 release caveat"). The only
   check is the build.
+
+## L7-D, 2026-09-30 — what the HTTP/2 fingerprint owes Windows
+
+**Run only from a tip the maintainer has pushed** that contains L7-D's merge, and record the tip in
+the result. L7-D's merge is `5fcb700`, and its tier-1 refresh is `e514fe2`.
+
+**What L7-D changed:**
+- It added `http2/Fingerprint.h`, which is pure computation over bytes, with no socket and no
+  OpenSSL.
+- It added a new module for its ten cases, `utf_baselib_h2core2`.
+- It edited comments in `http2/FrameCodec.h` and `http2/Session.h`, line for line.
+
+**What Linux established:**
+- The gate is green: `utf_baselib_h2core2` at clang release and gcc debug, 10 cases each, and 50 runs
+  clean at clang debug.
+- The comment edits change no object. `utf_baselib_h2core`, rebuilt after the merge, is byte-identical
+  at gcc debug and at clang release. So no other module needs a Windows run for them.
+
+**What Linux cannot settle:**
+- **E1. Run `utf_baselib_h2core2` whole.** Its cases are pure inputs, so they are expected green on
+  every flavor.
+- **E2. Its x86 debug size.** Record it. It is 24,009,840 bytes (22.9 MB) at a64 clang debug. That is
+  about 26.3 to 28.6 MB on x86 by the measured 1.15 to 1.25 ratio: inferred, not measured.
+- **E3. Whether it builds at x86 `ccl16` release.** As D3 above, only the build can tell.
