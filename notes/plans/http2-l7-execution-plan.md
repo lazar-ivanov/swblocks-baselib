@@ -7,9 +7,14 @@ begins when the maintainer says so.
   with changes, with no P1. All seventeen findings were checked at the source and taken
   (`plan-fable-orchestrator-r1.md`). Each is marked where it landed by its F-number, except F13's three
   text corrections, which were made in place.
+- **The Windows round `f481a2d`, analysed 2026-09-29** by the orchestrator and by Fable, independently
+  (`l7/reviews/windows-round-impact-*.md`). Neither found anything requiring an amendment before
+  Phase 1. Each item folded is marked by its G-number.
 
 **What this is.** The implementation plan's §9 (S7.1 to S7.5) was written on 2026-09-17, before L0 to
-L6 were built and reviewed. This document refreshes it against the code as it stands on `edd921b`, folds
+L6 were built and reviewed. This document refreshes it against the code as it stands on `edd921b` — and
+the Windows round `f481a2d` which followed changed no file §1 cites; its one library edit is a comment in
+`tasks/TcpBaseTasks.h`, and its harness changes are the ones §5 names. It folds
 in the S7.3 work which the layer reviews left, answers how L7 sequences against the decompression
 work, and turns the slices into change-sets for the parallel workflow
 (`parallel-implementation-workflow.md`). Where it and §9 differ, it says why (§4.1). The design is
@@ -361,13 +366,13 @@ Put to the maintainer on 2026-09-29, from the Fable review's F2.
 
 | Change-set | Slice | Delivers | Depends on | Design note | Tests |
 |---|---|---|---|---|---|
-| **L7-A** | §6.7 | The capture endpoint (D-L7-2), its README and self-test; the capture procedure. **Acceptance includes the review's controls (F5):** tickets off, and no hello with `pre_shared_key` (41) taken as a source; every connection recorded, with the navigation's marked; GREASE stripped; the extension *set* derived, with JA4 identical across hellos; SNI by hosts-file name; the build and field-trial-visible extensions recorded, twice; ALPN shown as `h2`; each HPACK field's representation recorded, and a cookie set so crumbling shows; two subresource destinations; a typed navigation; an interpreter check | D-L7-2 | no | the tool's own, with RFC 7541 Appendix C; a self-check against our own client's hello, parsed by `TlsClientHello.h` too |
-| **L7-B** | S7.1 | The TLS spike, **and the builder change it pins** (F1): `createAsioSslClientContext( )` applies the groups and key shares, signature algorithms, `status_request`, SCT and padding, with the name allowlist extended to groups and signature algorithms through the shared rule header L7-C introduces. Each 3.5.4 knob is verified from our own captured hello. Each family's extension set is diffed against ours **both ways**, and every surplus or missing extension is named with its switch; a switch found, such as `encrypt_then_mac`, is added to `TlsClientProfile` and the data model (F7). JA3/JA4 per family against the browser's. The decoy ECH and ALPS are checked against this host's OpenSSL servers only, and all left off (D-L7-4). `delegated_credentials` is never emulated. A spike record goes under `issues/` | captures for the comparison (D-L7-1); L7-C's rule header for the builder change; none for the knob checks | its evaluation method, reviewed first | `utf_baselib_h2profiles`, pinning each verified knob. **Gate: every OpenSSL-linked module**; lands before L7-F |
-| **L7-C** | S7.2a | `httpclient/BrowserProfiles.h`: JSON to `BrowserProfile` to the three typed profiles, validating untrusted input (design §6.2); `get( id )` and `load( json )`; the version strings composed into the per-kind header lists (§4.3 item 7). **The name rule** moves to an OpenSSL-free header, shared by the loader and the builder: extended to groups and signature algorithms, anonymous and NULL suites refused, every list bounded (F8). The header is chosen to keep this change-set's gate narrow (§5). **Decides** how HTTP/1.1-only headers and the `Host` position are represented (F6). Compiles without OpenSSL (F14) | — | no | `utf_baselib_h2profiles`, fixtures only |
+| **L7-A** | §6.7 | The capture endpoint (D-L7-2), its README and self-test; the capture procedure. **Acceptance includes the review's controls (F5):** tickets off, and no hello with `pre_shared_key` (41) taken as a source; every connection recorded, with the navigation's marked; GREASE stripped; the extension *set* derived, with JA4 identical across hellos; SNI by hosts-file name; the build and field-trial-visible extensions recorded, twice; ALPN shown as `h2`; each HPACK field's representation recorded, and a cookie set so crumbling shows; two subresource destinations; a typed navigation; an interpreter check; **and the tool never closes a connection on its own initiative while a browser may still be sending** (the Windows round's G4). One connection carries the navigation, the subresource and the `fetch`, and every close it makes is a lingering one: GOAWAY (on the HTTP/1.1 pass, `Connection: close`), `shutdown( SHUT_WR )`, reads discarded until the browser's end of stream or a short bound, then `close`. The capture browsers run on Windows (D-L7-1), where a segment meeting a closed socket draws a reset that discards what the browser has not yet read (owed list W11) | D-L7-2 | no | the tool's own, with RFC 7541 Appendix C; a self-check against our own client's hello, parsed by `TlsClientHello.h` too |
+| **L7-B** | S7.1 | The TLS spike, **and the builder change it pins** (F1): `createAsioSslClientContext( )` applies the groups and key shares, signature algorithms, `status_request`, SCT and padding, with the name allowlist extended to groups and signature algorithms through the shared rule header L7-C introduces. Each 3.5.4 knob is verified from our own captured hello. Each family's extension set is diffed against ours **both ways**, and every surplus or missing extension is named with its switch; a switch found, such as `encrypt_then_mac`, is added to `TlsClientProfile` and the data model (F7). JA3/JA4 per family against the browser's. The decoy ECH and ALPS are checked against this host's OpenSSL servers only, and all left off (D-L7-4). `delegated_credentials` is never emulated. A spike record goes under `issues/`. **Every addition stays inside the fake templates** (`CryptoInitT`, `AsioSslStreamWrapperT`), with no table or function at namespace scope. `utf_baselib_io` compiles these headers, and sits at 74.34 of 75 MB on `win-x86-ccl16-debug` (W16). The lane reports `io`'s a64 object delta, which should be about zero, and the Windows section builds `win-x86-ccl16-debug` whole (G8) | captures for the comparison (D-L7-1); L7-C's rule header for the builder change; none for the knob checks | its evaluation method, reviewed first | `utf_baselib_h2profiles`, pinning each verified knob. **Gate: every OpenSSL-linked module**; lands before L7-F |
+| **L7-C** | S7.2a | `httpclient/BrowserProfiles.h`: JSON to `BrowserProfile` to the three typed profiles, validating untrusted input (design §6.2); `get( id )` and `load( json )`; the version strings composed into the per-kind header lists (§4.3 item 7). **The name rule** moves to an OpenSSL-free header, shared by the loader and the builder: extended to groups and signature algorithms, anonymous and NULL suites refused, every list bounded (F8). The header is chosen to keep this change-set's gate narrow (§5). Once `CryptoBase.h` includes it, it reaches `utf_baselib_io`, so its rule lives inside a fake template, not at namespace scope (G8). **Decides** how HTTP/1.1-only headers and the `Host` position are represented (F6). Compiles without OpenSSL (F14) | — | no | `utf_baselib_h2profiles`, fixtures only |
 | **L7-D** | S7.4a | `http2/Fingerprint.h`, rendering the frames a `Session` produced. OpenSSL-free | — | no | `utf_baselib_h2profiles` or an h2core sibling, by headroom |
 | **L7-E** | S7.2b | The four built-in profiles as JSON literals, derived from the captures, each with its grade and deviations. The raw captures are stored beside them as test data, read before they are committed. Chrome first. **Acceptance (F5):** every connection recorded; the profile derived from the navigation's connection; JA4 identical across all hellos; no extension 41; no GREASE value in the profile | L7-A, L7-B (grades), L7-C, captures | no | `utf_baselib_h2profiles`: each loads and validates, and each matches its capture |
 | **L7-F** | S7.3 | The wiring (§4.3) and `session -> profile( BrowserProfile )`, gated to 3.5 | L7-B (builder), L7-C | **yes** | a new module, `utf_baselib_h2profiles2`, reserved |
-| **L7-G** | S7.4b | The report on the response **and on the connection** (design §6.6), with the once-per-profile-and-backend debug log. Its note chooses an accessor on `ClientConnection`, which changes both drivers and every test stub implementing the interface, or a carrier in the connection task (F4). The `accept-encoding` deviation is computed per request, from what was sent (F17) | L7-D, L7-F | yes, for the report's shape | `utf_baselib_h2profiles2` |
+| **L7-G** | S7.4b | The report on the response **and on the connection** (design §6.6), with the once-per-profile-and-backend debug log. Its note chooses between two shapes (F4). **(a)** An accessor on `ClientConnection`, which changes both drivers and the seven test stubs implementing it: `Http2DriverTestUtils.h:514` (twelve modules), `utf_baselib_httpclient/TestClientContracts.h:387`, `…/TestHttpClientRequestTask.h:102` and `:528`, `utf_baselib_h2client/TestClientConnectionTaskBase.h:405`, `utf_baselib_h2client4/TestConnectionPool.h:365` — W18's file, whose fix at `:82-270` must survive — and `utf_baselib_h2client11/TestNegotiatedPublication.h:715`. Its Windows section then runs `h2client4` through tier 3's runner, where W18's harness race alone reproduced (G5). **(b)** A carrier in the connection task, published the way CS-9 publishes the negotiated protocol: written once on the strand, behind an atomic flag, readable from any thread. That shape was settled on Windows (handoff D1), and V01's lesson applies: a test waits for the publication, then reads (G6). The `accept-encoding` deviation is computed per request, from what was sent (F17) | L7-D, L7-F | yes, for the report's shape | `utf_baselib_h2profiles2` |
 | **L7-H** | S7.5 | The vectors per profile, in two decoder states, pinning the profile's order whatever the registration order (F17). The `NotSupportedException` rule asserted at version numbers either side of 3.5, as S3.4's test does, and the 1.1.1w run itself owed (F14). **The version-string refresh procedure**: what is re-captured, which JSON fields change, which vectors re-pin; a refresh must not move the TLS or HTTP/2 vectors (F15) | L7-E, L7-G | no | `utf_baselib_h2profiles` and `…2`; captures and vectors in `…3` if headroom requires |
 
 ### 4.3 L7-F, the wiring: what its design note must settle
@@ -413,6 +418,9 @@ Put to the maintainer on 2026-09-29, from the Fable review's F2.
 9. **The `priority` header** (F2). One source, not two: the per-kind literal in `defaultHeaders`, with
    `priorityHeaderValue` removed or made that literal's source.
 10. **`sec-fetch-site`**, by D-L7-5.
+11. **W17 is not this change-set's.** The library's server-side lingering close is deferred by the
+    maintainer as a product question, and is not folded here, although this change-set may be open on
+    neighbouring `tasks/` files (G11).
 
 ### 4.4 The phases
 
@@ -450,6 +458,14 @@ Specific to L7:
     debug object through the Windows section.
   - The session-level cases instantiate the session and both drivers, so they go to a new module,
     **`utf_baselib_h2profiles2`, reserved**.
+  - **It will be over the 40 MB target from its first case** (the Windows round's G7). The session-level
+    modules the Windows matrix measured on 2026-09-29 sit at 44.4 to 56.3 MB on `win-x86-*-debug`:
+    `httpclient9` 44.4/44.7, `…10` 54.6/55.3, `…5` 55.5/56.3. So its `Main.cpp` records the reason at
+    creation, as theirs do.
+  - **An a64-to-x86 estimate uses the measured 1.15 to 1.25** (2^20 units), not row 5c's 1.13 to 1.17.
+  - **L7-F's note measures each shape of §4.3 item 1 on this module's x86 debug object**, as well as at gcc
+    release. A second policy's instantiation of every layer, in a module already near 55 MB, is what
+    could reach the 75 MB ceiling.
   - **`utf_baselib_h2profiles3` is reserved** for the captures and vectors, if headroom requires.
   - `data/` cannot be shared, so a module reading a capture holds its own copy.
   - **Captures are read before they are committed.** `accept-language` names the operator's locale,
@@ -461,6 +477,27 @@ Specific to L7:
   - A change to `httpclient/ClientConnection.h` reaches both drivers, the pool and the session. That is
     L7-G's, if its note chooses the interface.
   - Everything else gates on its dependents.
+  - **`utf_baselib_io` on Windows** (G8). Through `AsioSslStreamWrapper.h:20`, `CryptoBase.h` and
+    `TlsClientProfile.h` are also compiled by `utf_baselib_io`, at 74.34 of 75 MB on
+    `win-x86-ccl16-debug`, where the ceiling fails the build (W16; the sizes record).
+    - Both headers are fake templates, so an addition inside `CryptoInitT` or another class template
+      costs a module nothing it does not instantiate. L7-B and L7-C keep every new table and function
+      inside one.
+    - L7-B's Windows section builds `win-x86-ccl16-debug` whole, as the round did.
+    - `TcpSslStrandedStreams.h` is included by no library header, so §4.3 item 1's shape (b) does not
+      reach `io`.
+- **The test peers, as the Windows round `f481a2d` left them** (G2, G3; the orchestrator's O4).
+  - **HTTP/2.** The shared peers — `Http2TestServer.h` and `RawFrameScriptPeer.h`, through
+    `HttpClientSessionTestUtils.h` — end a cleartext connection with a lingering close (W11). A scripted
+    `closeConnection( )` ends the record log at `closed the connection`, the client's own close is not
+    recorded, and the socket closes only once the client has closed or 5 s have passed. TLS closes as
+    before. L7-F branches from a tip on which the Linux gate over those peers' twelve modules is green.
+  - **HTTP/1.1.** A case against `ScriptedPeer` sends one request per script, and the script reads it
+    whole before it answers. `closeSocket( )` is abortive by decision (W20, deferred as (b)). A
+    multi-request keep-alive script, or one which answers on the head, is the reversing condition that
+    record names: do not write one without taking (a) there first.
+  - **Not the library's own `HttpServer`** as a peer in L7's new cases. Its teardown has no lingering
+    close (W17, deferred).
 - **What cannot run here, recorded as owed:**
   - the 1.1.1w run (S7.5). The 1.1.1w flavor does not build on this host
     (`issues/openssl-1x-flavor-deferral.md`). With L7-C and L7-D OpenSSL-free, and only 3.5-specific
@@ -493,3 +530,7 @@ week".*
 
 The captures are the one thing outside our control. The wiring path is the critical path unless they
 take more than about three days.
+
+**The Windows sections run as each change-set lands** (the Windows round's G12). A section the size of
+`f481a2d`'s took the Windows agent about a day, and the agent is free. That is scheduling, and the
+run-time figure above does not include it.
