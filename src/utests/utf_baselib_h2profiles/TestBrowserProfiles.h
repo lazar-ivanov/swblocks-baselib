@@ -1264,6 +1264,28 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_MalformedDocumentsAreRefusedTests )
     }
 
     /*
+     * A member name repeated within one object is the JSON layer's to resolve (core/JsonUtils.h,
+     * readFromString): Boost.JSON keeps the last of them, validated like any other value, and
+     * json-spirit refuses the document. Either way the earlier one - the one a reader going top
+     * down sees first - is never what loads (the checkpoint review's C1-2)
+     */
+
+    {
+        auto repeated = document;
+
+        repeated.extraTopLevel = R"json("platform": "LaterPlatform")json";
+
+#ifdef BL_USE_JSON_SPIRIT
+        requireRefused( repeated, shape );
+#else
+        UTF_REQUIRE_EQUAL(
+            kindOf( requireLoads( repeated ), httpclient::HttpRequestKind::Navigation ).defaultHeaders[ 4 ].value,
+            R"("LaterPlatform")"
+            );
+#endif
+    }
+
+    /*
      * Each of the three shapes, and each of the three request kinds, is required
      */
 
@@ -1912,6 +1934,20 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_HeaderNamesAndValuesAreValidatedTests )
             );
 
         ( void ) requireLoads( withSubresourceHeader( R"json({ "name": "accept", "value": "" })json" ) );
+
+        /*
+         * The one control character a value may carry: a horizontal tab between two field-vchars
+         * (RFC 9110 5.5)
+         */
+
+        const auto tabbed = requireLoads(
+            withSubresourceHeader( R"json({ "name": "accept", "value": "image/test,\t*/*" })json" )
+            );
+
+        UTF_REQUIRE_EQUAL(
+            kindOf( tabbed, httpclient::HttpRequestKind::Subresource ).defaultHeaders[ 1 ].value,
+            "image/test,\t*/*"
+            );
     }
 
     /*
