@@ -1783,7 +1783,7 @@ def analyse_session(out_dir):
     checks = {
         "connections_recorded": len(rows),
         "hellos_recorded": len(hellos),
-        "ja4_identical_across_hellos": len(ja4_values) == 1,
+        "ja4_identical_across_hellos": len(ja4_values) == 1 if ja4_values else None,     # None: no hello to judge
         "ja4_values": ja4_values,
         "hellos_refused_as_profile_source": [row["connection"] for row in rows if row["pre_shared_key"]],
         "navigation_connections": navigations,
@@ -1802,7 +1802,7 @@ def analyse_session(out_dir):
             str(number): [kind for kind in REQUIRED_KINDS if kind not in by_number[number]["kinds"]]
             for number in navigations},
         "alpn_selected": {str(row["connection"]): row["alpn"] for row in rows},
-        "sni_is_the_capture_host": bool(hellos) and all(row["sni"] == session.get("host") for row in hellos),
+        "sni_is_the_capture_host": all(row["sni"] == session.get("host") for row in hellos) if hellos else None,
         "hello_retry_requests": [row["connection"] for row in rows if row["hello_retry_request"]],
         "handshakes_not_complete": [row["connection"] for row in rows if row["handshake"] != "complete"],
         "lingering_close_outcomes": {str(row["connection"]): row["lingering_close"] for row in rows},
@@ -1818,9 +1818,9 @@ def format_report(summary):
     lines = ["%s: %d connection(s), %d ClientHello(s)" % (session.get("browser"), checks["connections_recorded"],
                                                          checks["hellos_recorded"])]
     ja4_values = checks["ja4_values"]
-    if checks["ja4_identical_across_hellos"]:
+    if checks["hellos_recorded"] and checks["ja4_identical_across_hellos"]:     # no hello: nothing to compare
         lines.append("JA4 identical across every hello: yes, %s" % next(iter(ja4_values)))
-    else:
+    elif checks["hellos_recorded"]:
         lines.append("PROBLEM: JA4 differs across the hellos: %s" % json.dumps(ja4_values))
     if checks["hellos_refused_as_profile_source"]:
         lines.append("PROBLEM: hello(s) carrying pre_shared_key, refused as a profile source: connection(s) %s"
@@ -1833,7 +1833,8 @@ def format_report(summary):
             number, checks["alpn_selected"][str(number)],
             "the script, the image and the fetch on the same connection" if not missing
             else "not on this connection: " + ", ".join(missing)))
-    if session.get("pass", "h2") == "h2" and checks["visits_on_connections_of_their_own"] < 2:
+    if session.get("pass", "h2") == "h2" and checks["navigation_connections"] and \
+            checks["visits_on_connections_of_their_own"] < 2:           # with no navigation, that line says it all
         lines.append("PROBLEM: only %d visit(s) made a new connection; visit 2 must start the browser anew "
                      "(README 2.2, step 4)" % checks["visits_on_connections_of_their_own"])
     if checks["connections_with_more_than_one_navigation"]:
@@ -1854,7 +1855,7 @@ def format_report(summary):
     for number, symptoms in checks["interception_symptoms"].items():
         lines.append("PROBLEM: something may stand between the browser and the tool on connection %s (%s): "
                      "README 1.5" % (number, "; ".join(symptoms)))
-    if not checks["sni_is_the_capture_host"]:
+    if checks["hellos_recorded"] and not checks["sni_is_the_capture_host"]:
         lines.append("PROBLEM: not every hello named %s in its SNI" % session.get("host"))
     for key, text in (("hello_retry_requests", "a HelloRetryRequest on connection(s)"),
                       ("handshakes_not_complete", "no complete handshake on connection(s)")):

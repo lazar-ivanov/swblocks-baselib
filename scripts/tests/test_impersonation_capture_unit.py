@@ -771,6 +771,35 @@ class TestVisits:
         assert "PROBLEM" not in capture.format_report(summary)
 
 
+class TestEmptyRun:
+    """A2-2: a run in which nothing arrived says so, and says nothing false beside it."""
+
+    @pytest.mark.parametrize("with_connection", [False, True], ids=["no-connection", "a-connection-with-no-hello"])
+    def test_an_empty_run_reports_no_navigation_and_nothing_else(self, tmp_path, with_connection):
+        capture.write_json(str(tmp_path / capture.SESSION_FILE), {"host": "capture.test", "pass": "h2",
+                                                                  "browser": "synthetic"})
+        if with_connection:
+            directory = tmp_path / "conn-0001"
+            directory.mkdir()
+            (directory / capture.RAW_FILE).write_bytes(b"")
+            (directory / capture.PLAIN_FILE).write_bytes(b"")
+            capture.write_json(str(directory / capture.META_FILE),
+                               {"connection": 1, "handshake": "incomplete: the client closed the connection"})
+        summary = capture.analyse_session(str(tmp_path))
+        report = capture.format_report(summary).splitlines()
+        assert [line for line in report if line.startswith("PROBLEM")] == ["PROBLEM: no navigation was recorded"]
+        assert not any(line.startswith("JA4") for line in report)
+        checks = summary["checks"]
+        assert checks["hellos_recorded"] == 0
+        assert checks["ja4_identical_across_hellos"] is None and checks["sni_is_the_capture_host"] is None
+
+    def test_hellos_without_a_navigation_keep_their_ja4_line_and_drop_the_visits_line(self, tmp_path):
+        summary = write_session(tmp_path, [{"plain": h2_plain(requests=())}])
+        report = capture.format_report(summary).splitlines()
+        assert [line for line in report if line.startswith("PROBLEM")] == ["PROBLEM: no navigation was recorded"]
+        assert report[1].startswith("JA4 identical across every hello: yes, t13d")
+
+
 class TestInterception:
     """A1-9: what the tool can see of a proxy or an antivirus answering the browser for it."""
 
