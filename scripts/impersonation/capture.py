@@ -1665,6 +1665,37 @@ def _header_names(analysed):
     return [name.lower() for name, _ in (_navigation_of(analysed) or {}).get("headers", [])]
 
 
+PROXY_HEADERS = ("via", "forwarded", "x-forwarded-for", "proxy-connection")
+
+
+def _interception_symptoms(hello, alpn, exchanges, h2_run):
+    """
+    What a connection shows when something between the browser and the tool - a proxy, or an antivirus's HTTPS
+    scanning - answered the browser and sent the tool its own ClientHello (A1-9). The certificate it shows the
+    browser never reaches the tool, so these are what the tool can see. Two rest on facts about browsers,
+    stated where they are used.
+    """
+    symptoms = []
+    # Rests on a fact about browsers (INFERRED): every browser in scope offers both h2 and TLS 1.3
+    if hello is not None and ("h2" not in hello["alpn"] or "0304" not in hello["supported_versions"]):
+        symptoms.append("a hello offering no h2 or no TLS 1.3")
+    if h2_run and alpn != "h2" and any(request["kind"] == "navigation" and not request["after_close_began"]
+                                       for request in exchanges):
+        symptoms.append("a navigation that did not negotiate h2")
+    for request in exchanges:
+        names = sorted(set(name.lower() for name, _ in request["headers"]) & set(PROXY_HEADERS))
+        if names:
+            symptoms.append("proxy headers: %s" % ", ".join(names))
+            break
+    # Rests on a protocol fact (INFERRED): BoringSSL GREASEs every Chrome and Edge hello, while an interceptor
+    # makes its own hello and passes the browser's request headers through
+    chromium = any("chromium" in value.lower() for request in exchanges for name, value in request["headers"]
+                   if name.lower() == "sec-ch-ua")
+    if chromium and hello is not None and not any(hello["grease_stripped"].values()):
+        symptoms.append("a request naming Chromium on a hello with no GREASE")
+    return symptoms
+
+
 def analyse_session(out_dir):
     session = read_json(os.path.join(out_dir, SESSION_FILE)) or {}
     directories = sorted(name for name in os.listdir(out_dir)
@@ -1685,6 +1716,8 @@ def analyse_session(out_dir):
             "hello_retry_request": bool(analysed.get("hello_retry_request")),
             "kinds": [request["kind"] for request in exchanges if not request["after_close_began"]],
             "ended_by": meta.get("ended_by"), "lingering_close": (meta.get("linger") or {}).get("outcome"),
+            "interception_symptoms": _interception_symptoms(hello, meta.get("alpn"), exchanges,
+                                                            session.get("pass", "h2") == "h2"),
         })
         for request in exchanges:
             requests.append({"connection": analysed["connection"], "stream": request.get("stream"),
@@ -1726,6 +1759,8 @@ def analyse_session(out_dir):
         "connections_with_more_than_one_navigation": [number for number in navigations
                                                       if navigation_count[number] > 1],
         "visit_agreement": visits,
+        "interception_symptoms": {str(row["connection"]): row["interception_symptoms"] for row in rows
+                                  if row["interception_symptoms"]},
         "kinds_missing_from_navigation_connection": {
             str(number): [kind for kind in REQUIRED_KINDS if kind not in by_number[number]["kinds"]]
             for number in navigations},
@@ -1774,6 +1809,9 @@ def format_report(summary):
         if visit["header_order_differs"]:
             lines.append("Note: the navigation's header order differs between visit 1 (connection %s) and visit %d "
                          "(connection %s)" % (visit["compared_with"], visit["visit"], visit["connection"]))
+    for number, symptoms in checks["interception_symptoms"].items():
+        lines.append("PROBLEM: something may stand between the browser and the tool on connection %s (%s): "
+                     "README 1.5" % (number, "; ".join(symptoms)))
     if not checks["sni_is_the_capture_host"]:
         lines.append("PROBLEM: not every hello named %s in its SNI" % session.get("host"))
     for key, text in (("hello_retry_requests", "a HelloRetryRequest on connection(s)"),

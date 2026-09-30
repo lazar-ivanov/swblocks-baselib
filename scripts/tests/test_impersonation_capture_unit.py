@@ -771,6 +771,54 @@ class TestVisits:
         assert "PROBLEM" not in capture.format_report(summary)
 
 
+class TestInterception:
+    """A1-9: what the tool can see of a proxy or an antivirus answering the browser for it."""
+
+    @pytest.mark.parametrize("hello, symptom", [
+        (client_hello(0x0303, [0x0A0A, 0x1301], [extension(0x2A2A, b""), server_name("capture.test"),
+                                                 alpn([b"http/1.1"]), supported_versions([0x0304])]),
+         "a hello offering no h2 or no TLS 1.3"),
+        (client_hello(0x0303, [0x0A0A, 0x1301], [extension(0x2A2A, b""), server_name("capture.test"),
+                                                 alpn([b"h2"]), supported_versions([0x0303])]),
+         "a hello offering no h2 or no TLS 1.3"),
+    ], ids=["no-h2", "no-tls-1.3"])
+    def test_a_hello_no_browser_would_send(self, tmp_path, hello, symptom):
+        summary = write_session(tmp_path, [{"hello": hello}, {}])
+        assert summary["checks"]["interception_symptoms"] == {"1": [symptom]}
+        assert ("PROBLEM: something may stand between the browser and the tool on connection 1 (%s)" % symptom
+                in capture.format_report(summary))
+
+    def test_a_navigation_that_did_not_negotiate_h2_in_an_h2_run(self, tmp_path):
+        summary = write_session(tmp_path, [{"alpn": "http/1.1", "plain": TYPED_HTTP1_NAVIGATION}, {}])
+        assert summary["checks"]["interception_symptoms"] == {"1": ["a navigation that did not negotiate h2"]}
+
+    @pytest.mark.parametrize("name", ["via", "forwarded", "x-forwarded-for", "proxy-connection"])
+    def test_proxy_headers(self, tmp_path, name):
+        fields = NAVIGATION_FIELDS + [(name, "1.1 proxy.example")]
+        summary = write_session(tmp_path, [{"plain": h2_plain(requests=(fields,))}, {}])
+        assert summary["checks"]["interception_symptoms"] == {"1": ["proxy headers: %s" % name]}
+
+    def test_proxy_headers_over_http1_whatever_their_case(self, tmp_path):
+        head = TYPED_HTTP1_NAVIGATION[:-2] + b"X-Forwarded-For: 10.0.0.1\r\n\r\n"
+        summary = write_session(tmp_path, [{"plain": head}], run="http/1.1")
+        assert summary["checks"]["interception_symptoms"] == {"1": ["proxy headers: x-forwarded-for"]}
+
+    def test_a_request_naming_chromium_on_a_hello_with_no_grease(self, tmp_path):
+        no_grease = client_hello(0x0303, [0x1301], [server_name("capture.test"), alpn([b"h2"]),
+                                                    supported_versions([0x0304])])
+        brands = [("sec-ch-ua", '"Chromium";v="131", "Google Chrome";v="131", "Not_A Brand";v="24"')]
+        chromium = h2_plain(requests=(NAVIGATION_FIELDS + brands,))
+        summary = write_session(tmp_path, [{"hello": no_grease, "plain": chromium},
+                                           {"plain": chromium}, {"hello": no_grease}])
+        assert summary["checks"]["interception_symptoms"] == {
+            "1": ["a request naming Chromium on a hello with no GREASE"]}
+
+    def test_a_browser_through_nothing_shows_none(self, tmp_path):
+        summary = write_session(tmp_path, [{}, {}])
+        assert summary["checks"]["interception_symptoms"] == {}
+        assert "PROBLEM" not in capture.format_report(summary)
+
+
 # ========== The controls that need no socket ==========
 
 class TestControls:
