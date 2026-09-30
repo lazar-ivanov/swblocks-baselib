@@ -1379,10 +1379,7 @@ class Connection(threading.Thread):
             if self.client_closed:
                 self.meta["ended_by"] = "the client sent close_notify"
                 return
-            data = self._read(POLL_SECONDS)
-            if data is None:
-                if not self.server.stop_requested:
-                    continue
+            if self.server.stop_requested:          # on every pass, not only an idle one: a trickle cannot hold it
                 if deadline is None:
                     deadline = time.monotonic() + self.server.linger_seconds
                 if not self.follower.partial():
@@ -1392,6 +1389,8 @@ class Connection(threading.Thread):
                 if time.monotonic() >= deadline:
                     self.meta["ended_by"] = "the tool was stopped with a request incomplete"
                     return
+            data = self._read(POLL_SECONDS)
+            if data is None:
                 continue
             if not data:
                 self.meta["ended_by"] = self._gone_text()

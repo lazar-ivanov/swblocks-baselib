@@ -614,6 +614,29 @@ class TestHttp1Capture:
         assert summary["checks"]["alpn_selected"] == {"1": "http/1.1"}
         assert summary["session"]["alpn_offered"] == ["http/1.1"]
 
+    def test_a_stop_ends_a_connection_that_trickles_an_unfinished_request(self, start_server, certificates):
+        """A1-14: the loop checks the stop and its deadline on every pass, so a client keeping its request
+        unfinished by sending a line every 50 ms cannot hold the connection past the bound."""
+        server = start_server(http1=True, linger_seconds=0.5)
+        tls = connect(server.port, client_context(certificates, ("http/1.1",)))
+        tls.sendall(b"GET / HTTP/1.1\r\nHost: capture.test\r\n")
+        connection = server.connections[0]
+        assert connection.partial_request.wait(WAIT_SECONDS)
+        server.request_stop()
+        for _ in range(400):                        # 20 s of trickle at most, against a 0.5 s deadline
+            try:
+                tls.sendall(b"X-Trickle: 1\r\n")
+            except OSError:
+                break                               # the tool has closed
+            connection.join(0.05)                   # the client's cadence, and the wait on what is asserted
+            if not connection.is_alive():
+                break
+        assert not connection.is_alive()
+        tls.close()
+        server.wait()
+        meta = read_json(Path(server.out_dir) / "conn-0001" / "meta.json")
+        assert meta["ended_by"] == "the tool was stopped with a request incomplete"
+
     def test_a_malformed_request_is_answered_and_recorded_and_the_summary_is_written(self, start_server, certificates):
         """A1-5, end to end: a Content-Length that passes isdigit() but is no number gets a 400 with
         Connection: close and a lingering close, and the run still ends in a summary.json holding the error."""
