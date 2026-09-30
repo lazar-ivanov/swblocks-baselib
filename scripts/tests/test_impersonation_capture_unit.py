@@ -476,6 +476,10 @@ def records(message, sizes):
     return out
 
 
+CHANGE_CIPHER_SPEC = b"\x14\x03\x03\x00\x01\x01"
+APPLICATION_DATA = b"\x17\x03\x03\x00\x02zz"
+
+
 def openssl_client_hello():
     """What Python's own OpenSSL client sends first, taken from its memory BIO: no socket at all."""
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -516,6 +520,27 @@ class TestRecordLayer:
         follower = capture.RecordStream()
         follower.feed(stream)
         assert follower.hello is None and text in follower.error
+
+    @staticmethod
+    def analysed(tmp_path, stream):
+        (tmp_path / capture.RAW_FILE).write_bytes(stream)
+        capture.write_json(str(tmp_path / capture.META_FILE),
+                           {"connection": 1, "tls_version": "TLSv1.3", "handshake": "complete"})
+        return capture.analyse_connection(str(tmp_path))
+
+    def test_a_hello_in_two_records_is_one_hello_and_no_retry(self, tmp_path):
+        """A1-2: the records the hello itself arrived in are not a second hello."""
+        result = self.analysed(tmp_path, records(HAND_WORKED, [40]) + CHANGE_CIPHER_SPEC + APPLICATION_DATA)
+        assert result["record_types"] == [22, 22, 20, 23]
+        assert result["hello"]["ja4"]["fingerprint"] == "t13d0406h2_e00fd9ffaebd_fb71836bce29"
+        assert "hello_retry_request" not in result
+
+    def test_a_second_hello_after_the_change_cipher_spec_is_a_retry(self, tmp_path):
+        """The positive case beside it, so the fix cannot become "never report a HelloRetryRequest"."""
+        stream = records(HAND_WORKED, [40]) + CHANGE_CIPHER_SPEC + records(HAND_WORKED, []) + APPLICATION_DATA
+        result = self.analysed(tmp_path, stream)
+        assert result["record_types"] == [22, 22, 20, 22, 23]
+        assert result["hello_retry_request"] is True
 
     def test_a_real_openssl_hello(self):
         """As TlsClientHello_CapturedFromRealHandshakeTests asserts it, on the OpenSSL this Python links."""

@@ -172,6 +172,7 @@ class RecordStream:
         self.hello = None
         self.error = None
         self.record_types = []
+        self.hello_records = None                   # how many records the hello itself arrived in
         self.done = False
 
     def feed(self, data):
@@ -194,6 +195,8 @@ class RecordStream:
                     return self._fail("a record of type %d arrived inside the ClientHello" % content_type)
                 self.handshake += fragment
                 self._take_hello()
+                if self.hello is not None and self.hello_records is None:
+                    self.hello_records = len(self.record_types)
             elif content_type == 23:
                 self.done = True
 
@@ -1554,7 +1557,7 @@ def analyse_connection(directory):
             result["hello"] = summarize_hello(records.hello)
         except ParseError as error:
             result["hello_error"] = "the ClientHello does not parse: %s" % error
-        if meta.get("tls_version") == "TLSv1.3" and records.record_types.count(22) > 1:
+        if meta.get("tls_version") == "TLSv1.3" and 22 in records.record_types[records.hello_records:]:
             result["hello_retry_request"] = True
     else:
         result["hello_error"] = records.error or "no complete ClientHello was received"
