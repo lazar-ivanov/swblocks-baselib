@@ -1272,6 +1272,17 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_SessionOpeningEdgeShapesTests )
         UTF_REQUIRE( 0U != ( frames[ 1 ].flags & Globals::FRAME_FLAG_PRIORITY ) );
         UTF_REQUIRE( 0U == ( frames[ 1 ].flags & Globals::FRAME_FLAG_END_HEADERS ) );
 
+        /*
+         * The HEADERS frame, its priority fields included, is exactly the peer's 16384: 16379
+         * octets of fragment and the 5 of the fields. Put on top of a full 16384 fragment they
+         * would make it 16389, more than the peer allows (RFC 9113 4.2)
+         */
+
+        UTF_REQUIRE_EQUAL(
+            frames[ 1 ].length,
+            static_cast< std::uint32_t >( Globals::MAX_FRAME_SIZE_DEFAULT )
+            );
+
         UTF_REQUIRE_EQUAL(
             frames[ 2 ].type,
             static_cast< std::uint32_t >( Globals::FRAME_TYPE_CONTINUATION )
@@ -2052,7 +2063,9 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_BoundsAreEnforcedAtTheirEdgesTests )
     /*
      * The first block, decoded: the shape of an HPACK bomb - one field indexed once, then named
      * by its index 62 an octet at a time. RFC 7541 4.1 counts each field as its name, its value
-     * and 32, and 16 of these fields fit in 65536 octets with the pseudo-headers where 17 do not
+     * and 32, and 16 of these fields fit in 65536 octets with the pseudo-headers where 17 do not.
+     * The edge itself is then hit exactly: one more field pads the 16 to 65536 octets, which are
+     * read, and to 65537, which are refused
      */
 
     {
@@ -2068,6 +2081,9 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_BoundsAreEnforcedAtTheirEdgesTests )
             ( 5U + 1U + 32U );                                  /* :path / */
 
         const std::size_t bound = Http2Fingerprint::MAX_DECODED_FIRST_HEADER_BLOCK_SIZE;
+
+        UTF_REQUIRE_EQUAL( bound, static_cast< std::size_t >( 65536U ) );
+
         const std::size_t fit = ( bound - pseudoHeaders ) / perField;
 
         UTF_REQUIRE_EQUAL( fit, static_cast< std::size_t >( 16U ) );
@@ -2082,6 +2098,40 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_BoundsAreEnforcedAtTheirEdgesTests )
         UTF_REQUIRE_EQUAL(
             fingerprintOf( head + headersFrame( 1U, block, true ) ),
             std::string( "|00|0|m,a,s,p" )
+            );
+
+        /*
+         * The 16 decode to 177 + 16 * 4038 = 64785 octets. A field "x-pad" costs 5 + v + 32,
+         * so a value of 714 octets lands on 65536 exactly (HpackDecoder refuses a field when
+         * its size is more than what is left: 751 is not, 752 is)
+         */
+
+        const std::string padName( "x-pad" );
+        const std::size_t decoded = pseudoHeaders + fit * perField;
+        const std::size_t padValue = bound - decoded - ( padName.size() + 32U );
+
+        UTF_REQUIRE_EQUAL( padValue, static_cast< std::size_t >( 714U ) );
+
+        UTF_REQUIRE_EQUAL(
+            fingerprintOf(
+                head +
+                headersFrame(
+                    1U,
+                    block + literalWithNewName( padName, std::string( padValue, 'p' ) ),
+                    true
+                    )
+                ),
+            std::string( "|00|0|m,a,s,p" )
+            );
+
+        requireRefused(
+            head +
+            headersFrame(
+                1U,
+                block + literalWithNewName( padName, std::string( padValue + 1U, 'p' ) ),
+                true
+                ),
+            "the opening's first header block decodes to more than 65536 octets"
             );
 
         block += indexedField( 62U );
