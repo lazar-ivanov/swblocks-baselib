@@ -294,7 +294,10 @@ gated on the whole suite.
   `SSL_CTX_add_custom_ext` are evaluated, default off, and none is adopted without evidence. What is
   open is where that evidence comes from.
 - **What happens if it is not done.** The workarounds stay off, and Chrome stays `Ja4Candidate`
-  without a measured match. That is safe, but it is the one lever for Chrome's JA4.
+  without a measured match. That is safe, but it is the one lever for Chrome's JA4. *Corrected
+  2026-09-30. The decoys are not enough on their own: this build cannot send certificate compression
+  (extension 27), so Chrome's JA4 cannot match here with the decoys on or off. By Decision 2 (§3),
+  Chrome and Edge are graded `Approximate` in L7. The choice taken below, decoys off, is unaffected.*
 - **Risk and reach.**
   - Testing against **local server stacks** reaches nothing outside this machine: OpenSSL's
     `s_server`, nginx, Go's `crypto/tls`, and a BoringSSL-based server if one can be built here.
@@ -347,9 +350,15 @@ Put to the maintainer on 2026-09-29, from the Fable review's F2.
   cannot be relied on to declare it.
 - **Taken 2026-09-29: (b)**, as recommended.
 
-### Pending with the maintainer — put 2026-09-30, during Phase 1
+### Put to the maintainer on 2026-09-30, during Phase 1 — all five taken the same day
 
-Each was put in the decision shape. None blocks L7-A, L7-C or L7-D.
+Each was put in the decision shape. None blocks L7-A, L7-C or L7-D. **Taken 2026-09-30: every
+recommendation below, as recommended.** In the order of what lands first:
+- **CS-11**, a dedicated core change-set gated on the whole suite, lands first after the pause. It
+  carries Decision 4's (ii) and Decision 3's include, each as its own commit.
+- **L7-B's part 2** then implements Q2's (b).
+- **Decision 2's (A)** is applied by L7-E when it assigns the grades.
+- **The workflow's setup line** is recorded in `parallel-implementation-workflow.md` §2.
 
 - **Q2 (lane 1): which layer refuses a TLS name that is not exactly one item.** A cipher, group or
   signature-algorithm name can pass the character rule and still not be exactly one item: an alias, a
@@ -361,6 +370,8 @@ Each was put in the decision shape. None blocks L7-A, L7-C or L7-D.
     - Groups use IANA names only.
     - A signature algorithm repeated under two spellings is a stated residual.
     - Safari's compiled-out 3DES suites become deviations.
+  - **Taken 2026-09-30: (b).** L7-B's part 2 implements it in the context builder, for all three
+    lists. Design §3.3's "no aliases" is corrected to say where it is enforced.
 - **Decision 4 (lane 3): memory within one HPACK header block.** The dynamic table keeps what a block
   evicts until the block ends, and the decoder keeps decoding past the decoded bound. So the memory held
   within a block is not bounded by the table's size. This is in the HTTP/2 core today.
@@ -369,18 +380,30 @@ Each was put in the decision shape. None blocks L7-A, L7-C or L7-D.
   - Recommended: **(ii)**, in a dedicated core change-set gated on the whole suite, first after the
     pause. `Fingerprint.h` then inherits the bound. If the fix is deferred, L7-D's lane adds a bounded
     pre-check of its own.
+  - **Taken 2026-09-30: (ii), in a dedicated core change-set, CS-11, first after the pause**, gated on
+    the whole suite. `Fingerprint.h` inherits the bound, so its own pre-check is not needed.
+    `c34a7ac`'s paragraph on its memory bound is rewritten when CS-11 lands.
 - **Decision 3 (lane 1): `data/DataModelObjectDefs.h:456` uses `bl::utils::lexical_cast` without
   including `core/Utils.h`.** A file that includes a data model first does not compile, and
   `ServicesConfig.h` fails the same way.
   - Recommended: **its own commit beside Decision 4's fix**, sharing its gate. It carries a standing
     guard: a second translation unit in `utf_baselib_data` whose first include is a data model, as
     `utf_baselib/TestPublicHeaderInstantiation.cpp` already does for its headers.
+  - **Taken 2026-09-30: its own commit in CS-11**, with the standing guard, so it no longer rides with
+    L7-B's part 2. Its commit also rewrites `BrowserProfiles.h`'s comment on the workaround, which the
+    fix makes false.
 - **Decision 2: Chrome's and Edge's grade in L7.** This build cannot send extension 27 (certificate
   compression), which `http-content-decoders-deferral.md` item 6 defers, so their JA4 cannot match here.
   - Recommended: **(A) `Approximate`**, re-assessed when item 6 is taken up. (B) would keep
     `Ja4Candidate`, redefined as "reachable".
+  - **Taken 2026-09-30: (A).**
+    - In L7, on this build, Chrome and Edge are graded `Approximate`, with their reasons listed:
+      certificate compression is not built (item 6, deferred), and the ECH and ALPS decoys are off
+      (D-L7-4).
+    - `Ja4Candidate` keeps its definition, "expected to match". No profile carries it until item 6 and
+      a decoy are adopted, and the spike is re-run then (item 6's step 5).
 - **The workflow's setup section** should say to copy the git-ignored `projects/make/ci-init-env.mk`
-  into each new worktree. Recommended: yes.
+  into each new worktree. Recommended: yes. **Taken 2026-09-30: yes.**
 
 ---
 
@@ -408,7 +431,7 @@ Each was put in the decision shape. None blocks L7-A, L7-C or L7-D.
 | **L7-B** | S7.1 | The TLS spike, **and the builder change it pins** (F1): `createAsioSslClientContext( )` applies the groups and key shares, signature algorithms, `status_request`, SCT and padding, with the name allowlist extended to groups and signature algorithms through the shared rule header L7-C introduces. Each 3.5.4 knob is verified from our own captured hello. Each family's extension set is diffed against ours **both ways**, and every surplus or missing extension is named with its switch; a switch found, such as `encrypt_then_mac`, is added to `TlsClientProfile` and the data model (F7). JA3/JA4 per family against the browser's. The decoy ECH and ALPS are checked against this host's OpenSSL servers only, and all left off (D-L7-4). `delegated_credentials` is never emulated. A spike record goes under `issues/`. It also runs the capture tool's parser, `capture.py hello <file>`, on our own captured hello, and records that its JA3 string, JA3 hash and JA4 equal `TlsClientHello.h`'s (lane 2's Q1, after L7-A merges). **Every addition stays inside the fake templates** (`CryptoInitT`, `AsioSslStreamWrapperT`), with no table or function at namespace scope. `utf_baselib_io` compiles these headers, and sits at 74.34 of 75 MB on `win-x86-ccl16-debug` (W16). The lane reports `io`'s a64 object delta, which should be about zero, and the Windows section builds `win-x86-ccl16-debug` whole (G8) | captures for the comparison (D-L7-1); L7-C's rule header for the builder change; none for the knob checks | its evaluation method, reviewed first | `utf_baselib_h2profiles`, pinning each verified knob. **Gate: every OpenSSL-linked module**; lands before L7-F |
 | **L7-C** | S7.2a | `httpclient/BrowserProfiles.h`: JSON to `BrowserProfile` to the three typed profiles, validating untrusted input (design §6.2); `get( id )` and `load( json )`; the version strings composed into the per-kind header lists (§4.3 item 7). **The name rule** moves to an OpenSSL-free header, shared by the loader and the builder: extended to groups and signature algorithms, anonymous and NULL suites refused, every list bounded (F8). The header is chosen to keep this change-set's gate narrow (§5). Once `CryptoBase.h` includes it, it reaches `utf_baselib_io`, so its rule lives inside a fake template, not at namespace scope (G8). **Decides** how HTTP/1.1-only headers and the `Host` position are represented (F6). Compiles without OpenSSL (F14). *(Corrected 2026-09-30 by lane 1's Q1. The data model itself reaches OpenSSL, through `DataModelObject.h`'s `crypto/HashCalculator.h`, so a loader built on it cannot be OpenSSL-free. The rule header is OpenSSL-free. `BrowserProfiles.h` adds no OpenSSL edge beyond the data model's, names no OpenSSL identifier, and enters no `PreCompiled.h`. That is shown by include graph.)* *Landed 2026-09-30: merge `05b6ab6`, tier 1 `79d3d3d`. The gate is green: `utf_baselib_h2profiles` at clang release and gcc debug. It also delivers `httpclient/BrowserProfile.h`, the typed profile for L7-F, free of OpenSSL and JSON. Every list and every string is bounded. SETTINGS ids 1 and 6 are held to 65536 and 262144, because the session adopts both as its own HPACK bounds. F6 is decided: one default list per kind, with `host` a computed marker (§4.3 item 7a). A JSON `null` for a known property is refused with the data model's message, "Unrecognized property". Refusing it is right, and that core message is not changed on its own (review O-6)* | — | no | `utf_baselib_h2profiles`, fixtures only |
 | **L7-D** | S7.4a | `http2/Fingerprint.h`, rendering the frames a `Session` produced. OpenSSL-free. *Landed 2026-09-30: merge `5fcb700`, tier 1 `e514fe2`. The gate is green: `utf_baselib_h2core2` at clang release and gcc debug, and `utf_baselib_h2core`'s objects byte-identical in both across the comment edits to `FrameCodec.h` and `Session.h`. Its line in `http2/PreCompiled.h` moves to L7-B's part 2. Its memory bound on a hostile first block waits on Decision 4 (§3, pending)* | — | no | `utf_baselib_h2profiles` or an h2core sibling, by headroom. *It went to a new sibling, `utf_baselib_h2core2`, 22.9 MB at clang debug a64, since h2core is past the target* |
-| **L7-E** | S7.2b | The four built-in profiles as JSON literals, derived from the captures, each with its grade and deviations. The raw captures are stored beside them as test data, read before they are committed. Chrome first. **Acceptance (F5):** every connection recorded; the profile derived from the navigation's connection; JA4 identical across all hellos; no extension 41; no GREASE value in the profile; the tool's summary agrees with `TlsClientHello.h` on the browser bytes (lane 2's Q1); every captured SETTINGS id 1 and id 6 within the loader's ceilings of 65536 and 262144, or that ceiling raised in this change-set with the capture as its evidence and the decoder's cost re-assessed (L7-C's review, C1-1). A header a capture sends only over HTTP/2, such as Firefox's `te: trailers`, reverses F6's one list per kind (L7-C's review, O-4) | L7-A, L7-B (grades), L7-C, captures | no | `utf_baselib_h2profiles`: each loads and validates, and each matches its capture |
+| **L7-E** | S7.2b | The four built-in profiles as JSON literals, derived from the captures, each with its grade and deviations. *By Decision 2 (§3, taken 2026-09-30), all four are `Approximate` on this build. A captured suite the linked OpenSSL lacks is left out and listed as a deviation (Q2's (b))*. The raw captures are stored beside them as test data, read before they are committed. Chrome first. **Acceptance (F5):** every connection recorded; the profile derived from the navigation's connection; JA4 identical across all hellos; no extension 41; no GREASE value in the profile; the tool's summary agrees with `TlsClientHello.h` on the browser bytes (lane 2's Q1); every captured SETTINGS id 1 and id 6 within the loader's ceilings of 65536 and 262144, or that ceiling raised in this change-set with the capture as its evidence and the decoder's cost re-assessed (L7-C's review, C1-1). A header a capture sends only over HTTP/2, such as Firefox's `te: trailers`, reverses F6's one list per kind (L7-C's review, O-4) | L7-A, L7-B (grades), L7-C, captures | no | `utf_baselib_h2profiles`: each loads and validates, and each matches its capture |
 | **L7-F** | S7.3 | The wiring (§4.3) and `session -> profile( BrowserProfile )`, gated to 3.5 | L7-B (builder), L7-C | **yes** | a new module, `utf_baselib_h2profiles2`, reserved |
 | **L7-G** | S7.4b | The report on the response **and on the connection** (design §6.6), with the once-per-profile-and-backend debug log. Its note chooses between two shapes (F4). **(a)** An accessor on `ClientConnection`, which changes both drivers and the seven test stubs implementing it: `Http2DriverTestUtils.h:514` (twelve modules), `utf_baselib_httpclient/TestClientContracts.h:387`, `…/TestHttpClientRequestTask.h:102` and `:528`, `utf_baselib_h2client/TestClientConnectionTaskBase.h:405`, `utf_baselib_h2client4/TestConnectionPool.h:365` — W18's file, whose fix at `:82-270` must survive — and `utf_baselib_h2client11/TestNegotiatedPublication.h:715`. Its Windows section then runs `h2client4` through tier 3's runner, where W18's harness race alone reproduced (G5). **(b)** A carrier in the connection task, published the way CS-9 publishes the negotiated protocol: written once on the strand, behind an atomic flag, readable from any thread. That shape was settled on Windows (handoff D1), and V01's lesson applies: a test waits for the publication, then reads (G6). The `accept-encoding` deviation is computed per request, from what was sent (F17). *From L7-D's merge, 2026-09-30: the fingerprint refuses our own session's opening in five named cases (`Fingerprint.h`'s class note), and the report reads such a refusal as "fingerprint not available", never as a connection failure. fingerproxy and the nginx module put HEADERS priority fields into the P part, so their strings differ from ours on Chrome-like profiles* | L7-D, L7-F | yes, for the report's shape | `utf_baselib_h2profiles2` |
 | **L7-H** | S7.5 | The vectors per profile, in two decoder states, pinning the profile's order whatever the registration order (F17). The `NotSupportedException` rule asserted at version numbers either side of 3.5, as S3.4's test does, and the 1.1.1w run itself owed (F14). **The version-string refresh procedure**: what is re-captured, which JSON fields change, which vectors re-pin; a refresh must not move the TLS or HTTP/2 vectors (F15) | L7-E, L7-G | no | `utf_baselib_h2profiles` and `…2`; captures and vectors in `…3` if headroom requires |

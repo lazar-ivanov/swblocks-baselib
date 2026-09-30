@@ -326,6 +326,14 @@ can carry `@SECLEVEL=0`, which overrides `SSL_CTX_set_security_level`
 (`tls-legacy-protocol-opt-in-removal-decision.md`, "Cipher lists"). The loader therefore accepts only
 explicit suite names matched against an allowlist of characters, no aliases - and the context builder
 asserts the level is still 2 after applying the list.
+*Corrected 2026-09-30, by the maintainer's decision on L7's Q2 (`http2-l7-execution-plan.md` §3).*
+- The character rule stops the list operators and nothing more. An alias such as `ALL` passes it.
+- **"No aliases" is enforced by the context builder.** It applies each cipher, group and
+  signature-algorithm name alone on the linked OpenSSL. It refuses, naming the name, any name that does
+  not resolve to exactly one item of its list's kind, and any repeat.
+- So a profile names what resolves on the linked OpenSSL, and its deviation list names the rest.
+- A signature algorithm repeated under two spellings cannot be detected on 3.5.4, and is a stated
+  residual.
 
 **The allowlist is a positive rule, not a list of forbidden characters.** Amended in S3.4, which found
 the original wording unusable: it said "no `@`, `!`, `+`, `-`, `:` inside a name", and taken literally
@@ -675,7 +683,9 @@ All of this is `bl::http2`, sans-I/O, role-neutral. RFC 9113 throughout, RFC 754
   the decoder holds while it consumes the block. The dynamic table keeps the entries a block evicts
   until the block ends, so that it can roll the block back. The memory held within one block is
   therefore not bounded by the table's size. The fix is Decision 4 of
-  `http2-l7-execution-plan.md` §3, pending the maintainer.
+  `http2-l7-execution-plan.md` §3, taken 2026-09-30: a per-block cap on what a block inserts. A block
+  over the cap is a connection error with `ENHANCE_YOUR_CALM`. The fix lands in its own core change-set,
+  CS-11.
 - Encoder: a policy object decides per field between indexed, incremental-indexed, literal and
   never-indexed, and whether Huffman is shorter. Cookie crumbling (RFC 9113 section 8.2.3) is a
   profile switch, since browsers do it.
@@ -1449,6 +1459,12 @@ TCP/IP-level fingerprinting (TTL, window, options) is the operating system's and
   Chrome and Edge.
 - `Approximate` - it cannot match, for stated reasons. Firefox and Safari.
 
+*Taken 2026-09-30 (Decision 2 of `http2-l7-execution-plan.md` §3):* in L7, on this build, Chrome and
+Edge are `Approximate` too. Certificate compression cannot be sent, because OpenSSL is built without a
+compressor (`http-content-decoders-deferral.md` item 6, deferred), and the ECH and ALPS decoys are off.
+`Ja4Candidate` keeps its meaning. It applies once item 6 and a decoy are adopted and the spike is
+re-run.
+
 An `Approximate` profile is useful against servers that inspect headers and HTTP/2 only. Against one
 that cross-checks TLS with the claimed browser, it is not.
 
@@ -1513,7 +1529,8 @@ slightly off.
   v110, so OpenSSL's fixed order is a legitimate sample and detectors use the order-insensitive JA4 for
   it. JA3 cannot match (order, point formats). What stands between OpenSSL and Chrome's JA4 is the
   extension *set*: ALPS, certificate compression and ECH-GREASE are missing. Edge is identical below
-  the header layer.
+  the header layer. *In L7, on this build, both are graded `Approximate`, because certificate
+  compression cannot be sent here (Decision 2, taken 2026-09-30; see the grades in 6.1).*
 - **Firefox - `Approximate`.** Fixed extension order; `delegated_credentials` and
   `record_size_limit`; and its trailing SHA-1 signature algorithms cannot be advertised at security
   level 2, which D4 keeps.
