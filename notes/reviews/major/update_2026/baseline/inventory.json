@@ -7259,6 +7259,126 @@
    "namespaces": []
   },
   {
+   "body_sha": "f2f821ae0e91086cdbee262252e06d56",
+   "doc_sha": "6a23e8ca0b16738cdd4d407cd012478d",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1958,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_BoundsAreEnforcedAtTheirEdgesTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "06ed02ed283e37f8622a0c42fa0ef2ff",
+   "doc_sha": "72f1654495567af588ac77f0cc6c1544",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1305,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_ContinuationPaddingAndPriorityFlagsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f9bb9641251d447a257054076c91abc4",
+   "doc_sha": "5a1e11aca4a81adbb2d61de005719730",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1427,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_FramesSplitAcrossReadsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "284471d25cb8a65913ebd625e034180e",
+   "doc_sha": "c03d5e2b274033f5454f685bbeb8b451",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1655,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_MalformedOpeningsAreRefusedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "651baefc0fe2a779c53a6d1d3b74df66",
+   "doc_sha": "b98b8bcddf46a152d4cde213f3745d35",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 780,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_PaperExamplesRenderExactlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "64e7765702e9b5503725a7f041671857",
+   "doc_sha": "51b037ebba9ac716670b79e2fab1fcf4",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2218,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_ReaderContractAndRenderingTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "592162dbbac1a3cc47956e3e0cab2628",
+   "doc_sha": "b70a5082f9ce364a5213839ea8c4ec5e",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1120,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_SessionOpeningEdgeShapesTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d308b1f26389ddbda188eee3434df5de",
+   "doc_sha": "e190216444bd5b866f1ddff5f8fbf52c",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 984,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_SessionOpeningsRenderAsTheirProfilesSayTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f53fcf7e92d9872f614f1af15b53e132",
+   "doc_sha": "5e22c89f73b2380059ce3a3b0065323b",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2180,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_TruncatedOpeningsAreRefusedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "424b50e8baca11132a35262169186e1e",
+   "doc_sha": "8ab5a9a073f0339ecdbe65fba3f1fe80",
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1477,
+   "module": "utf_baselib_h2core2",
+   "name": "Http2Fingerprint_WhichFramesAreReadTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "be7247a75a95ce1cdc899a746503ccbf",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestHttp2Globals.h",
@@ -18954,6 +19074,16 @@
   },
   {
    "conditional_only": false,
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "guards": [],
+   "label": "namespace h2fingerprint",
+   "line": 53,
+   "module": "utf_baselib_h2core2",
+   "ns": "utest",
+   "sha": "e1155392f45b03e4ccf8102b2df70bb7"
+  },
+  {
+   "conditional_only": false,
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
    "guards": [],
    "label": "/**",
@@ -24123,6 +24253,52 @@
    ],
    "notes_index": true
   },
+  "utf_baselib_h2core2": {
+   "data_files": {},
+   "data_literals": [
+    "example.com"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/http2/Fingerprint.h>",
+      "<baselib/http2/Session.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<baselib/core/ErrorHandling.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<cstddef>",
+      "<cstdint>",
+      "<exception>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2core2/TestHttp2Fingerprint.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/http2/PreCompiled.h>",
+      "\"TestHttp2Fingerprint.h\""
+     ],
+     "path": "utf_baselib_h2core2/UtfBaselibH2Core2Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "Http2Fingerprint_BoundsAreEnforcedAtTheirEdgesTests",
+    "Http2Fingerprint_ContinuationPaddingAndPriorityFlagsTests",
+    "Http2Fingerprint_FramesSplitAcrossReadsTests",
+    "Http2Fingerprint_MalformedOpeningsAreRefusedTests",
+    "Http2Fingerprint_PaperExamplesRenderExactlyTests",
+    "Http2Fingerprint_ReaderContractAndRenderingTests",
+    "Http2Fingerprint_SessionOpeningEdgeShapesTests",
+    "Http2Fingerprint_SessionOpeningsRenderAsTheirProfilesSayTests",
+    "Http2Fingerprint_TruncatedOpeningsAreRefusedTests",
+    "Http2Fingerprint_WhichFramesAreReadTests"
+   ],
+   "notes_index": true
+  },
   "utf_baselib_h2profiles": {
    "data_files": {},
    "data_literals": [
@@ -27768,6 +27944,13 @@
    "module": "utf_baselib_h2core",
    "name": "utest",
    "sha": "60091bbb3792d118d935dcdd54eabff3"
+  },
+  {
+   "file": "utf_baselib_h2core2/TestHttp2Fingerprint.h",
+   "line": 51,
+   "module": "utf_baselib_h2core2",
+   "name": "utest",
+   "sha": "9c1ec340d2181a6f182fbeea1ed7b669"
   },
   {
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
