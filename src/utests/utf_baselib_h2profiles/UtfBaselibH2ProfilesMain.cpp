@@ -51,3 +51,4 @@
 #include "TestHttpClientProfiles.h"
 #include "TestTlsClientContext.h"
 #include "TestTlsClientHello.h"
+#include "TestBrowserProfiles.h"
