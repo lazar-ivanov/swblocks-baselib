@@ -78,7 +78,8 @@ namespace utest
                 R"json([ "ECDHE-ECDSA-AES128-GCM-SHA256", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" ])json";
             std::string cipherSuitesTls13 = R"json([ "TLS_AES_128_GCM_SHA256", "TLS_CHACHA20_POLY1305_SHA256" ])json";
             std::string groups =
-                R"json([ { "name": "X25519MLKEM768", "keyShare": true }, { "name": "secp256r1", "keyShare": false } ])json";
+                R"json([ { "name": "X25519MLKEM768", "keyShare": true },)json"
+                R"json( { "name": "secp256r1", "keyShare": false } ])json";
             std::string signatureAlgorithms = R"json([ "ecdsa_secp256r1_sha256", "rsa_pss_rsae_sha256" ])json";
             std::string alpnProtocols = R"json([ "h2", "http/1.1" ])json";
 
@@ -112,7 +113,8 @@ namespace utest
                 R"json( { "name": "accept-language", "value": "en-US,en;q=0.9" },)json"
                 R"json( { "name": "priority", "value": "u=0, i" } ],)json"
                 R"json( "callerHeaderPlacement": "BeforeAnchor", "callerHeaderAnchor": "accept-encoding",)json"
-                R"json( "http1CaseMap": { "host": "Host", "connection": "Connection", "user-agent": "User-Agent" },)json"
+                R"json( "http1CaseMap": { "host": "Host", "connection": "Connection",)json"
+                R"json( "user-agent": "User-Agent" },)json"
                 R"json( "priorityHeaderValue": "u=0, i" })json";
             std::string fetch =
                 R"json({ "defaultHeaders": [)json"
@@ -120,9 +122,11 @@ namespace utest
                 R"json( { "name": "user-agent" },)json"
                 R"json( { "name": "sec-ch-ua" },)json"
                 R"json( { "name": "accept", "value": "*/*" } ],)json"
-                R"json( "callerHeaderPlacement": "Appended", "http1CaseMap": {}, "priorityHeaderValue": "u=1, i" })json";
+                R"json( "callerHeaderPlacement": "Appended", "http1CaseMap": {},)json"
+                R"json( "priorityHeaderValue": "u=1, i" })json";
             std::string subresource =
-                R"json({ "defaultHeaders": [ { "name": "user-agent" }, { "name": "accept", "value": "image/test" } ],)json"
+                R"json({ "defaultHeaders": [ { "name": "user-agent" },)json"
+                R"json( { "name": "accept", "value": "image/test" } ],)json"
                 R"json( "callerHeaderPlacement": "Prepended", "priorityHeaderValue": "u=2" })json";
             std::string acceptEncoding = R"json([ "gzip", "br" ])json";
             std::string acceptLanguageQValues = R"json([ "0.9", "0.8" ])json";
@@ -412,7 +416,10 @@ UTF_AUTO_TEST_CASE( TlsNameRules_PlainNameRuleIsTheBuildersRuleTests )
         const auto& name = entry.first;
 
         UTF_REQUIRE_EQUAL( crypto::TlsNameRules::isNameSafe( name ), entry.second );
-        UTF_REQUIRE_EQUAL( crypto::TlsNameRules::isNameSafe( name ), crypto::CryptoBase::isCipherSuiteNameSafe( name ) );
+        UTF_REQUIRE_EQUAL(
+            crypto::TlsNameRules::isNameSafe( name ),
+            crypto::CryptoBase::isCipherSuiteNameSafe( name )
+            );
 
         /*
          * Groups and signature algorithms are judged by the same rule and nothing more
@@ -903,7 +910,9 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_VersionStringsComposeByteExactTests )
     auto refreshed = document;
 
     refreshed.userAgent = R"json("test-user-agent/2.0 (refreshed)")json";
-    refreshed.secChUaBrands = R"json([ { "brand": "TestBrowser", "version": "2" }, { "brand": "Not.A/Brand", "version": "24" } ])json";
+    refreshed.secChUaBrands =
+        R"json([ { "brand": "TestBrowser", "version": "2" },)json"
+        R"json( { "brand": "Not.A/Brand", "version": "24" } ])json";
     refreshed.platform = R"json("OtherPlatform")json";
 
     const auto after = requireLoads( refreshed );
@@ -1052,7 +1061,8 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_VersionStringsAreValidatedTests )
             "document is not a browser profile of the expected shape - Required property 'brand'"
             );
 
-        badBrand.secChUaBrands = R"json([ { "brand": "Test", "version": "1" }, { "brand": "Bell\u0007", "version": "1" } ])json";
+        badBrand.secChUaBrands =
+            R"json([ { "brand": "Test", "version": "1" }, { "brand": "Bell\u0007", "version": "1" } ])json";
         requireRefused( badBrand, "secChUaBrands[1].brand carries a character outside printable ASCII" );
 
         badBrand.secChUaBrands = R"json([ { "brand": "Caf\u00e9", "version": "1" } ])json";
@@ -1065,7 +1075,8 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_VersionStringsAreValidatedTests )
          * A brand once: sec-ch-ua never names one twice, whatever the versions
          */
 
-        badBrand.secChUaBrands = R"json([ { "brand": "Test", "version": "1" }, { "brand": "Test", "version": "2" } ])json";
+        badBrand.secChUaBrands =
+            R"json([ { "brand": "Test", "version": "1" }, { "brand": "Test", "version": "2" } ])json";
         requireRefused( badBrand, "secChUaBrands[1].brand repeats an earlier brand" );
 
         auto badPlatform = document;
@@ -1374,7 +1385,8 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_TlsShapeIsValidatedTests )
         requireRefused( suites, "tls.cipherSuitesTls12 has more than 64 entries" );
 
         suites = document;
-        suites.cipherSuitesTls13 = stringArray( "TLS_TEST_", httpclient::BrowserProfiles::MAX_CIPHER_SUITES_TLS13 + 1U );
+        suites.cipherSuitesTls13 =
+            stringArray( "TLS_TEST_", httpclient::BrowserProfiles::MAX_CIPHER_SUITES_TLS13 + 1U );
         requireRefused( suites, "tls.cipherSuitesTls13 has more than 16 entries" );
     }
 
@@ -1425,10 +1437,12 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_TlsShapeIsValidatedTests )
         algorithms.signatureAlgorithms = R"json([ "ed25519", "ED25519" ])json";
         requireRefused( algorithms, "tls.signatureAlgorithms[1] repeats an earlier signature algorithm" );
 
-        algorithms.signatureAlgorithms = stringArray( "sigalg_", httpclient::BrowserProfiles::MAX_SIGNATURE_ALGORITHMS );
+        algorithms.signatureAlgorithms =
+            stringArray( "sigalg_", httpclient::BrowserProfiles::MAX_SIGNATURE_ALGORITHMS );
         UTF_REQUIRE_EQUAL( requireLoads( algorithms ).tls.signatureAlgorithms.size(), 32U );
 
-        algorithms.signatureAlgorithms = stringArray( "sigalg_", httpclient::BrowserProfiles::MAX_SIGNATURE_ALGORITHMS + 1U );
+        algorithms.signatureAlgorithms =
+            stringArray( "sigalg_", httpclient::BrowserProfiles::MAX_SIGNATURE_ALGORITHMS + 1U );
         requireRefused( algorithms, "tls.signatureAlgorithms has more than 32 entries" );
     }
 
@@ -1514,7 +1528,8 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_Http2SettingsAreValidatedTests )
         settings.settings = std::string( R"json([ { "id": 5, "value": )json" ) + value + " } ]";
         requireRefused(
             settings,
-            "http2.settings[0].value is outside 16384 to 16777215, the range of SETTINGS_MAX_FRAME_SIZE (RFC 9113 6.5.2)"
+            "http2.settings[0].value is outside 16384 to 16777215, the range of SETTINGS_MAX_FRAME_SIZE "
+            "(RFC 9113 6.5.2)"
             );
     }
 
@@ -1578,7 +1593,8 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_Http2PrioritiesAndWindowsAreValidatedTests )
         windows.connectionWindowUpdateIncrement = "2147418113";
         requireRefused(
             windows,
-            "http2.connectionWindowUpdateIncrement is above 2147418112, which would take the connection window past 2^31-1"
+            "http2.connectionWindowUpdateIncrement is above 2147418112, which would take the connection window "
+            "past 2^31-1"
             );
 
         windows.connectionWindowUpdateIncrement = "2147418112";
@@ -1718,10 +1734,12 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_Http2PrioritiesAndWindowsAreValidatedTests )
         priority.headersPriority = R"json({ "isSet": false, "weight": 10 })json";
         requireRefused( priority, "http2.headersPriority carries priority fields but isSet is false" );
 
-        priority.headersPriority = R"json({ "isSet": false, "streamDependency": 0, "weight": 0, "exclusive": false })json";
+        priority.headersPriority =
+            R"json({ "isSet": false, "streamDependency": 0, "weight": 0, "exclusive": false })json";
         UTF_REQUIRE_EQUAL( requireLoads( priority ).http2.headersPriority.isSet.value(), false );
 
-        priority.headersPriority = R"json({ "isSet": true, "streamDependency": 0, "weight": 0, "exclusive": true })json";
+        priority.headersPriority =
+            R"json({ "isSet": true, "streamDependency": 0, "weight": 0, "exclusive": true })json";
 
         const auto loaded = requireLoads( priority );
 
@@ -1785,7 +1803,9 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_HeaderNamesAndValuesAreValidatedTests )
     for( const auto& value : { "a\\rb", "a\\nb", "a\\u0000b", "a\\u0007b", "a\\u007fb", " leading", "trailing\\t" } )
     {
         requireRefused(
-            withSubresourceHeader( std::string( R"json({ "name": "accept", "value": ")json" ) + value + R"json(" })json" ),
+            withSubresourceHeader(
+                std::string( R"json({ "name": "accept", "value": ")json" ) + value + R"json(" })json"
+                ),
             valueRule
             );
     }
@@ -1832,7 +1852,8 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_HeaderNamesAndValuesAreValidatedTests )
     {
         requireRefused(
             withSubresourceHeader( std::string( R"json({ "name": ")json" ) + owned + R"json(", "value": "1" })json" ),
-            "headers.subresource.defaultHeaders[1] is " + std::string( owned ) + ", which the session or the transport owns"
+            "headers.subresource.defaultHeaders[1] is " + std::string( owned ) +
+                ", which the session or the transport owns"
             );
     }
 
@@ -1961,10 +1982,21 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_HttpOneOnlyHeadersAreRepresentedTests )
 
         auto te = document;
 
-        te.subresource = replaced( document.subresource, accept, accept + R"json(, { "name": "te", "value": "trailers" })json" );
-        UTF_REQUIRE_EQUAL( kindOf( requireLoads( te ), httpclient::HttpRequestKind::Subresource ).defaultHeaders.size(), 3U );
+        te.subresource = replaced(
+            document.subresource,
+            accept,
+            accept + R"json(, { "name": "te", "value": "trailers" })json"
+            );
+        UTF_REQUIRE_EQUAL(
+            kindOf( requireLoads( te ), httpclient::HttpRequestKind::Subresource ).defaultHeaders.size(),
+            3U
+            );
 
-        te.subresource = replaced( document.subresource, accept, accept + R"json(, { "name": "te", "value": "gzip" })json" );
+        te.subresource = replaced(
+            document.subresource,
+            accept,
+            accept + R"json(, { "name": "te", "value": "gzip" })json"
+            );
         requireRefused(
             te,
             "headers.subresource.defaultHeaders[2].value is not trailers, the only value te may carry (RFC 9113 8.2.2)"
@@ -2009,21 +2041,30 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_PlacementCaseMapAndCodingsAreValidatedTests 
         auto placement = document;
 
         placement.fetch = replaced( document.fetch, R"json("Appended")json", R"json("Before")json" );
-        requireRefused( placement, "headers.fetch.callerHeaderPlacement is none of Appended, Prepended and BeforeAnchor" );
+        requireRefused(
+            placement,
+            "headers.fetch.callerHeaderPlacement is none of Appended, Prepended and BeforeAnchor"
+            );
 
         placement.fetch = replaced(
             document.fetch,
             R"json("callerHeaderPlacement": "Appended")json",
             R"json("callerHeaderPlacement": "Appended", "callerHeaderAnchor": "accept")json"
             );
-        requireRefused( placement, "headers.fetch.callerHeaderAnchor is set but callerHeaderPlacement is not BeforeAnchor" );
+        requireRefused(
+            placement,
+            "headers.fetch.callerHeaderAnchor is set but callerHeaderPlacement is not BeforeAnchor"
+            );
 
         placement.fetch = replaced(
             document.fetch,
             R"json("callerHeaderPlacement": "Appended")json",
             R"json("callerHeaderPlacement": "BeforeAnchor", "callerHeaderAnchor": "accept")json"
             );
-        UTF_REQUIRE_EQUAL( kindOf( requireLoads( placement ), httpclient::HttpRequestKind::Fetch ).callerHeaderAnchor, "accept" );
+        UTF_REQUIRE_EQUAL(
+            kindOf( requireLoads( placement ), httpclient::HttpRequestKind::Fetch ).callerHeaderAnchor,
+            "accept"
+            );
 
         placement = document;
 
@@ -2056,10 +2097,16 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_PlacementCaseMapAndCodingsAreValidatedTests 
         requireRefused( map, "headers.navigation.http1CaseMap has a key which is not a lower-case token" );
 
         map.navigation = replaced( document.navigation, caseMap, R"json("user-agent": "Accept")json" );
-        requireRefused( map, "headers.navigation.http1CaseMap.user-agent is not a token spelling the same name as its key" );
+        requireRefused(
+            map,
+            "headers.navigation.http1CaseMap.user-agent is not a token spelling the same name as its key"
+            );
 
         map.navigation = replaced( document.navigation, caseMap, R"json("user-agent": "User-Agent\r\nX-Evil: 1")json" );
-        requireRefused( map, "headers.navigation.http1CaseMap.user-agent is not a token spelling the same name as its key" );
+        requireRefused(
+            map,
+            "headers.navigation.http1CaseMap.user-agent is not a token spelling the same name as its key"
+            );
 
         map.navigation = replaced( document.navigation, caseMap, R"json("user-agent": "USER-AGENT")json" );
         UTF_REQUIRE_EQUAL(
