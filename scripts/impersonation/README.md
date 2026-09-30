@@ -241,6 +241,11 @@ When every browser on the machine is done:
 
 ## 5. Troubleshooting
 
+When a row says to repeat a run, start the browser with a **new** profile folder (2.1): a new
+`--user-data-dir` or `-profile` path, or a new Safari profile, and in Firefox import the CA again. A
+profile that has visited `capture.test` can load the page ahead of your Enter key, and a repeat in it can
+show the same problem again.
+
 | What you see | What it means, and what to do |
 |---|---|
 | `This Python cannot capture` | This Python's TLS library lacks TLS 1.3 or ALPN; the message says which. Use a python.org or Homebrew Python (1.2). |
@@ -251,16 +256,16 @@ When every browser on the machine is done:
 | The browser cannot find `capture.test` | Check that `ping capture.test` answers from 127.0.0.1. Turn off any VPN or proxy. In Firefox, turn off DNS over HTTPS for this profile. On a Mac, turn off iCloud Private Relay while capturing. |
 | The page stays at *Waiting for the fetch...* | Do not reload. Quit the browser, press Ctrl-C in the tool, and start that run again with a new `--out` folder. |
 | Windows asks whether Python may use the network | Either answer works. The tool only uses this machine's own `127.0.0.1`. |
-| `PROBLEM: JA4 differs across the hellos` | Two different ClientHellos in one run. The likeliest cause is the one the second visit is there to catch: the browser changed its TLS offer between the visits, after fetching its field-trial settings. Less likely: a proxy or antivirus answered some connections (see 1.5), or two browsers or profiles visited one run. Do not repeat the run to make it go away: send it as it is, with a note of anything unusual. |
+| `PROBLEM: JA4 differs across the hellos` | Two different ClientHellos in one run. The likeliest cause is the one the second visit is there to catch: the browser changed its TLS offer between the visits, after fetching its field-trial settings. Less likely: a proxy or antivirus answered some connections (see 1.5), or two browsers or profiles visited one run. Do not repeat the run to make it go away: send it as it is, with a note of anything unusual. If another row tells you to repeat the run, such as `no navigation was recorded`, send this capture and repeat the run as well. |
 | `PROBLEM: hello(s) carrying pre_shared_key` | A resumed connection. Its hello is never used as a profile source; the others are. Send it. |
 | `PROBLEM: not every hello named capture.test` | The address typed was not `https://capture.test/`. |
 | `PROBLEM: no navigation was recorded` | The page never loaded in this run. Repeat the run. |
-| `PROBLEM: only 1 visit(s) made a new connection` | The browser was still running at visit 2, so visit 2 reused visit 1's connection and sent no new ClientHello. Quit it completely (2.2, step 4), and repeat the HTTP/2 run with a new `--out` folder. |
+| `PROBLEM: only N visit(s) made a new connection` | The browser was still running at visit 2, so visit 2 reused visit 1's connection and sent no new ClientHello. Quit it completely (2.2, step 4), and repeat the HTTP/2 run with a new `--out` folder. N is 0 only when no navigation came with a ClientHello the tool could use as a profile source: then send the capture as it is, with a note. |
 | `PROBLEM: more than one navigation on connection(s) ...` | The same, or the page was reloaded. Repeat the run with a new `--out` folder. |
 | `PROBLEM: visit 2 (connection ...) disagrees with visit 1 ...` | The browser changed what it sends between the visits, most likely after fetching its field-trial settings. That is a finding, not a mistake: send the capture as it is, with a note. |
-| `PROBLEM: on connection ..., the navigation was not typed into the address bar ...` | The page was reached through a link, a bookmark or a suggestion. Repeat the run, typing the whole address and pressing Enter (2.2, step 2). |
-| `PROBLEM: on connection ..., the navigation was a reload ...` | The page was reloaded. Repeat the run, without reloading. |
-| `PROBLEM: on connection ..., the ... request is a prefetch or a prerender ...` | The browser loaded the page ahead of your Enter key, from its address-bar suggestions. Repeat the run: type the whole address, and press Enter at once. |
+| `PROBLEM: on connection ..., the navigation was not typed into the address bar ...` | The page came from a link, or the browser made the navigation without you - a restored tab, or the page loaded ahead of your Enter key. If you did type the address and press Enter, send the capture as it is, with a note of the browser. If this is only on visit 2's connection - the second `Navigation on connection` line of an HTTP/2 run - the capture is still good: visit 1 is the profile source and visit 2 only the check. Send it, with a note. Otherwise repeat the run (see above), typing the whole address and pressing Enter (2.2, step 2). |
+| `PROBLEM: on connection ..., the navigation was a reload ...` | The page was reloaded. If this is only on visit 2's connection - the second `Navigation on connection` line of an HTTP/2 run - the capture is still good: visit 1 is the profile source and visit 2 only the check. Send it, with a note. Otherwise repeat the run (see above), without reloading. |
+| `PROBLEM: on connection ..., the ... request is a prefetch or a prerender ...` | The browser loaded the page ahead of your Enter key, from its address-bar suggestions. If this is only on visit 2's connection - the second `Navigation on connection` line of an HTTP/2 run - the capture is still good: visit 1 is the profile source and visit 2 only the check. Send it, with a note. Otherwise repeat the run (see above): type the whole address, and press Enter at once. |
 | `PROBLEM: something may stand between the browser and the tool on connection ...` | A proxy, a VPN or an antivirus's HTTPS scanning answered the browser; the line names the signs. Turn it off (1.5), and repeat the run. |
 | `Note: cannot tell how the navigation ... was reached` | This browser sends no Sec-Fetch headers, so the tool cannot check how the page was reached. Nothing to do. |
 
