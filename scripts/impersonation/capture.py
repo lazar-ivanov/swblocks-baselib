@@ -1697,12 +1697,27 @@ def find_openssl(explicit=None):
     return None
 
 
+def inside_git_work_tree(path):
+    path = os.path.abspath(path)
+    while True:
+        if os.path.exists(os.path.join(path, ".git")):
+            return True
+        parent = os.path.dirname(path)
+        if parent == path:
+            return False
+        path = parent
+
+
 def make_certificates(host, directory, openssl=None, days=7):
     """
     A per-session CA and a leaf for the capture host. The CA's key is deleted as soon as the leaf is
-    signed, so nothing else can ever be signed by the CA the operator trusts.
+    signed, so nothing else can ever be signed by the CA the operator trusts, and no key is written
+    inside a git work tree, so none can be committed.
     """
     host = validate_host(host)
+    if inside_git_work_tree(directory):
+        raise CaptureError("%s is inside a git work tree: keep the session's keys outside any repository"
+                           % os.path.abspath(directory))
     tool = find_openssl(openssl)
     if tool is None:
         raise CaptureError("no openssl command was found; on Windows it comes with Git for Windows: pass "
