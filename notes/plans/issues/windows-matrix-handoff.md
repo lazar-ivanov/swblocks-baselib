@@ -486,6 +486,15 @@ record the tip in the result.
   5c's ratio. `tasks3` 35.2 MB, about 40–41 MB on x86; `tasks4` 30.4 MB at `8866065`, about 34–36;
   `http3` 34.4, about 39–40; `httpclient13` 35.2, about 40–41; `h2client9` 35.7, about 40–42;
   `h2client10` 35.9, about 41–42. Bytes and sources: `logs/astra4/cs9/sizes-units.txt`.)*
+  *(Measured on Windows the same day, `win-x86-vc143-debug` and `ccl16`:
+  - `tasks3` 44.0 and 43.8 MB;
+  - `httpclient13` 42.8 and 42.9;
+  - `http3` 41.8 and 42.2;
+  - `h2client9` 41.3 and 41.4;
+  - `h2client10` 41.4 and 41.6.
+
+  None is above 45 MB, so D-B stands. The ratio ran 1.15 to 1.25, above row 5c's. The `Main.cpp`
+  notes now carry the measured figures.)*
 
   **If any module measures above about 45 MB,** the maintainer's D-B reverses for the splittable
   ones: `tasks3`, `httpclient13` and `http3`. Report it.
