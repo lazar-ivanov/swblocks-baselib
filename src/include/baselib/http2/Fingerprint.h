@@ -129,8 +129,9 @@ namespace bl
          * WHICH FRAMES ARE READ
          * ------------------------------------------------------------------------------------
          *
-         *  - the bytes must begin with the client connection preface of RFC 9113 3.4, and the
-         *    first frame after it must be a SETTINGS frame without ACK - the 3.4 rule. Its
+         *  - the bytes must begin with the client connection preface of RFC 9113 3.4, which
+         *    "MUST be followed by a SETTINGS frame" - and not by an acknowledgement, on the
+         *    reading that 3.4's SETTINGS is the one the peer must itself acknowledge. Its
          *    entries are S, in order, duplicates and identifiers this library does not
          *    interpret included. A later SETTINGS frame, an acknowledgement among them, is not
          *    the fingerprint's
@@ -228,10 +229,10 @@ namespace bl
          *
          * An incremental reader and two static functions. The opening a session produces reaches
          * the wire over several produce( ) calls - the preface, SETTINGS, WINDOW_UPDATE and
-         * PRIORITY frames at construction, the first HEADERS once a request is submitted - and a
-         * frame can be split anywhere between two reads, so feed( ) takes the bytes as they come
-         * and isComplete( ) says when the first header block has ended. parse( ) is the one-shot
-         * form for bytes already gathered, and render( ) writes the string
+         * PRIORITY frames queued at construction, the first HEADERS once a request is submitted
+         * - and a frame can be split anywhere between two reads, so feed( ) takes the bytes as
+         * they come and isComplete( ) says when the first header block has ended. parse( ) is the
+         * one-shot form for bytes already gathered, and render( ) writes the string
          *
          * A reader which has refused its input is spent: feeding it again is a programming error,
          * as it is for FrameReader, because nothing it could still read would mean anything

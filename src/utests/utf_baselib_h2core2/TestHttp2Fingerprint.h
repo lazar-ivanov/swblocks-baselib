@@ -722,9 +722,9 @@ namespace utest
          *
          * 'settingsSent' and 'orderSent' are what the session puts on the wire for the profile,
          * which is the profile's own list with the session's two defaults applied - D11's 2:0
-         * appended when the profile does not name SETTINGS_ENABLE_PUSH, and RFC 9113 8.3.1's
-         * order when the profile names none (Session.h, queueOpeningFrames and
-         * appendPseudoHeaders)
+         * appended when the profile does not name SETTINGS_ENABLE_PUSH, and m,a,s,p when the
+         * profile names no order (Session.h, queueOpeningFrames and appendPseudoHeaders). That
+         * default is not the order RFC 9113 8.3.1 lists the four in, which is m,s,a,p
          */
 
         inline void requireSessionOpeningRendersAs(
@@ -783,7 +783,7 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_PaperExamplesRenderExactlyTests )
     using namespace utest::h2fingerprint;
 
     /*
-     * Firefox's priority tree as the paper lists it (section 3.0) and as Firefox wrote it: the
+     * Firefox's priority tree as the paper tabulates it (section 4.0) and as Firefox wrote it: the
      * OCTETS 200, 100 and 0, which the paper renders as 201, 101 and 1
      */
 
@@ -991,15 +991,15 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_SessionOpeningsRenderAsTheirProfilesSayTest
      * design's illustrative ones (6.4), used here as SHAPES and not as any browser's truth
      */
 
-    std::vector< Http2PseudoHeader > rfcOrder;
+    std::vector< Http2PseudoHeader > sessionDefaultOrder;
 
-    rfcOrder.push_back( Http2PseudoHeader::Method );
-    rfcOrder.push_back( Http2PseudoHeader::Authority );
-    rfcOrder.push_back( Http2PseudoHeader::Scheme );
-    rfcOrder.push_back( Http2PseudoHeader::Path );
+    sessionDefaultOrder.push_back( Http2PseudoHeader::Method );
+    sessionDefaultOrder.push_back( Http2PseudoHeader::Authority );
+    sessionDefaultOrder.push_back( Http2PseudoHeader::Scheme );
+    sessionDefaultOrder.push_back( Http2PseudoHeader::Path );
 
     /*
-     * No profile at all: the session's own 2:0 and nothing else, and RFC 9113 8.3.1's order
+     * No profile at all: the session's own 2:0 and nothing else, and its default order
      */
 
     {
@@ -1007,7 +1007,12 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_SessionOpeningsRenderAsTheirProfilesSayTest
 
         sent.push_back( setting( Globals::SETTINGS_ENABLE_PUSH, 0U ) );
 
-        requireSessionOpeningRendersAs( Http2Profile(), sent, rfcOrder, "2:0|00|0|m,a,s,p" );
+        requireSessionOpeningRendersAs(
+            Http2Profile(),
+            sent,
+            sessionDefaultOrder,
+            "2:0|00|0|m,a,s,p"
+            );
     }
 
     /*
@@ -1031,12 +1036,12 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_SessionOpeningsRenderAsTheirProfilesSayTest
         profile.headersPriority.weight = 255U;
         profile.headersPriority.exclusive = true;
 
-        profile.pseudoHeaderOrder = rfcOrder;
+        profile.pseudoHeaderOrder = sessionDefaultOrder;
 
         requireSessionOpeningRendersAs(
             profile,
             profile.settings,
-            rfcOrder,
+            sessionDefaultOrder,
             "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p"
             );
     }
@@ -1121,8 +1126,8 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_SessionOpeningEdgeShapesTests )
     const auto now = baseTime();
 
     /*
-     * THE PEER'S SETTINGS ARRIVE BEFORE THE FIRST REQUEST, as on a real connection they often do.
-     * Three things follow, and each is a way to read the opening wrongly:
+     * THE PEER'S SETTINGS ARRIVE BEFORE THE FIRST REQUEST, which nothing on a real connection
+     * prevents. Three things follow, and each is a way to read the opening wrongly:
      *
      *  - our acknowledgement of them is a SETTINGS frame written ahead of the first HEADERS, and
      *    it is not the fingerprint's S part
@@ -1305,7 +1310,7 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_ContinuationPaddingAndPriorityFlagsTests )
 
     /*
      * The block over a HEADERS and three CONTINUATION frames: a cut inside the :authority
-     * literal's value, an empty fragment, which RFC 9113 6.10 permits, and the rest
+     * literal's value, an empty fragment, which nothing in RFC 9113 6.10 forbids, and the rest
      */
 
     {
@@ -1544,9 +1549,9 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_WhichFramesAreReadTests )
 
     /*
      * P is every PRIORITY frame ahead of the first HEADERS frame, in order, whatever lies between
-     * them - and what lies between is skipped: PING, a type no RFC defines, an acknowledgement,
-     * RST_STREAM, and a PUSH_PROMISE whose block a CONTINUATION ends, which must not be taken for
-     * the first header block. A PRIORITY frame after the first block is not read
+     * them - and what lies between is skipped: PING, a type RFC 9113 does not define, an
+     * acknowledgement, RST_STREAM, and a PUSH_PROMISE whose block a CONTINUATION ends, which must
+     * not be taken for the first header block. A PRIORITY frame after the first block is not read
      */
 
     UTF_REQUIRE_EQUAL(
@@ -1949,9 +1954,10 @@ UTF_AUTO_TEST_CASE( Http2Fingerprint_BoundsAreEnforcedAtTheirEdgesTests )
 
     /*
      * The first block, compressed: 262144 octets are read and one more is refused. The block is
-     * dynamic table size updates to zero - one octet each, decoding to nothing, which RFC 7541
-     * 4.2 lets open a block - ahead of the pseudo-headers, so that the block at the bound still
-     * decodes, carried in frames of 16384 octets
+     * dynamic table size updates to zero, one octet each and decoding to nothing, ahead of the
+     * pseudo-headers, so that the block at the bound still decodes; it is carried in frames of
+     * 16384 octets. RFC 7541 4.2 lets updates open a block and holds an ENCODER to two of them,
+     * asking no count of a decoder - and HpackDecoder, as its own comment says, imposes none
      */
 
     {
