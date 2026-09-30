@@ -967,6 +967,13 @@ class TestControls:
         ("[Errno 2] No such file or directory: 'C:\\\\Users\\\\someone\\\\x.bin'",
          "[Errno 2] No such file or directory: 'x.bin'"),
         ("relative 'out/conn-0001' and a word", "relative 'out/conn-0001' and a word"),
+        ('File "C:\\Users\\O\'Brien\\capture\\capture.py", line 9', 'File "capture.py", line 9'),
+        ('No such file or directory: "C:\\\\Users\\\\O\'Brien\\\\capture\\\\x.bin"',
+         'No such file or directory: "x.bin"'),
+        ('File "/home/o\'brien/capture/capture.py", line 9', 'File "capture.py", line 9'),
+        ('File "\\\\server\\share\\someone\\capture.py", line 9', 'File "capture.py", line 9'),
+        ('File "<frozen runpy>", line 88', 'File "<frozen runpy>", line 88'),
+        ("two: '/a/b/c.py' and '/d/e.py'", "two: 'c.py' and 'e.py'"),
     ])
     def test_quoted_absolute_paths_are_reduced_to_names(self, text, expected):
         assert capture.without_paths(text) == expected

@@ -131,9 +131,8 @@ def read_bytes(path):
 def without_paths(text):
     """Every quoted absolute path reduced to its last component. A path can name the operator's account
     (C:\\Users\\<account>\\...), and a capture's records leave the machine."""
-    return re.sub(r"""(["'])(?:[A-Za-z]:[\\/]|/)[^"']*\1""",
-                  lambda match: match.group(1) + re.split(r"[\\/]+", match.group(0)[1:-1])[-1] + match.group(1),
-                  text)
+    return re.sub(r"""(["'])((?:[A-Za-z]:[\\/]|[\\/])(?:(?!\1).)*)\1""",
+                  lambda match: match.group(1) + re.split(r"[\\/]+", match.group(2))[-1] + match.group(1), text)
 
 
 def interpreter_report():
