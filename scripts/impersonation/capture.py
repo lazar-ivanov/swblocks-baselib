@@ -1106,7 +1106,8 @@ class Connection(threading.Thread):
         self.plain = open(os.path.join(self.directory, PLAIN_FILE), "wb")
         self.plain_length = 0
         self.records = RecordStream()
-        self.stopping = threading.Event()
+        self.partial_request = threading.Event()   # set while an HTTP/1.1 request is part way in
+        self.finishing_request = threading.Event()  # set once stopped, while waiting for such a request's rest
         self.meta = {"connection": number, "peer": "%s:%s" % peer[:2], "accepted_at": now_text(),
                      "request_times": {}}
         self.tls = self.incoming = self.outgoing = self.follower = None
@@ -1353,6 +1354,10 @@ class Connection(threading.Thread):
                     if closing:
                         self.meta["ended_by"] = "the tool was stopped (Connection: close)"
                         return self._flush()
+                if self.follower.partial():
+                    self.partial_request.set()
+                else:
+                    self.partial_request.clear()
             self._flush()
             if self.client_gone is not None:
                 self.meta["ended_by"] = self._gone_text()
@@ -1366,10 +1371,10 @@ class Connection(threading.Thread):
                     continue
                 if deadline is None:
                     deadline = time.monotonic() + self.server.linger_seconds
-                    self.stopping.set()
                 if not self.follower.partial():
                     self.meta["ended_by"] = "the tool was stopped"
                     return
+                self.finishing_request.set()        # it is answered, with Connection: close, when it is whole
                 if time.monotonic() >= deadline:
                     self.meta["ended_by"] = "the tool was stopped with a request incomplete"
                     return
@@ -1388,7 +1393,6 @@ class Connection(threading.Thread):
         or the bound, and only then close: the client's late segments meet an open socket, so they
         draw no reset (G4).
         """
-        self.stopping.set()
         linger = {"bound_seconds": self.server.linger_seconds, "plain_offset": self.plain_length}
         decrypting = self.meta.get("handshake") == "complete"
         start, outcome, raw_bytes = time.monotonic(), "the bound was reached", 0

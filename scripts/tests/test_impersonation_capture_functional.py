@@ -408,14 +408,19 @@ class TestHttp2Capture:
 # ========== HTTP/1.1: the second pass ==========
 
 def read_http1_response(tls, buffer=b""):
+    def more():
+        data = tls.recv(65536)
+        assert data, "the tool closed before its response was complete"
+        return data
+
     while b"\r\n\r\n" not in buffer:
-        buffer += tls.recv(65536)
+        buffer += more()
     head, _, rest = buffer.partition(b"\r\n\r\n")
     lines = head.decode("latin-1").split("\r\n")
     headers = [tuple(line.split(": ", 1)) for line in lines[1:]]
     length = int(dict(headers)["Content-Length"])
     while len(rest) < length:
-        rest += tls.recv(65536)
+        rest += more()
     return lines[0], headers, rest[:length], rest[length:]
 
 
@@ -433,12 +438,14 @@ class TestHttp1Capture:
         assert [value for name, value in headers if name == "Set-Cookie"] == list(capture.COOKIES)
         assert "Connection" not in dict(headers)
 
-        # A request in flight when the tool is stopped is answered, with Connection: close, then lingered
+        # A request in flight when the tool is stopped is answered, with Connection: close, then lingered.
+        # The stop comes once the tool holds the request part way in, and the rest once the stopped tool
+        # is waiting for it, so each step is certain
         second_head, second_tail = b"GET /fetch HTTP/1.1\r\nHost: capture.test\r\n", b"Cookie: capture_a=1\r\n\r\n"
         tls.sendall(second_head)
+        assert server.connections[0].partial_request.wait(WAIT_SECONDS)
         server.request_stop()
-        connection = server.connections[0]
-        assert connection.stopping.wait(WAIT_SECONDS)
+        assert server.connections[0].finishing_request.wait(WAIT_SECONDS)
         tls.sendall(second_tail)
         status, headers, body, _ = read_http1_response(tls)
         assert dict(headers)["Connection"] == "close" and json.loads(body)["protocol"] == "http/1.1"
