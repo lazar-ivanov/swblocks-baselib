@@ -230,7 +230,7 @@ namespace bl
              * '@' introduces a control token - '@SECLEVEL=0' silently overrides
              * ::SSL_CTX_set_security_level (design 3.3). None of those can appear, and '-' is
              * refused only in first position, the one place OpenSSL reads it as an operator; every
-             * TLS 1.2 suite name OpenSSL knows carries hyphens inside it
+             * TLS 1.2 suite name in OpenSSL's own spelling carries hyphens inside it
              *
              * The group and signature algorithm lists of OpenSSL 3.5 are the same kind of language
              * - ':' separates, a leading '*' marks a key share, '?' ignores an unknown name, '-'
