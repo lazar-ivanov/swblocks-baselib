@@ -18,7 +18,7 @@
 """
 Unit tests for scripts/impersonation/capture.py, the capture endpoint of browser impersonation.
 
-The expected values are never the tool's own output played back:
+The expected values for HPACK, JA3 and JA4 are never the tool's own output played back:
 
 - HPACK is checked against RFC 7541 Appendix C, block by block with the dynamic table after each,
   and every block is asserted to appear byte for byte in utf_baselib_h2core/TestHpack.h, whose cases
