@@ -17,6 +17,7 @@
 #ifndef __BL_HTTPCLIENT_BROWSERPROFILES_H_
 #define __BL_HTTPCLIENT_BROWSERPROFILES_H_
 
+#include <baselib/httpclient/BrowserProfile.h>
 #include <baselib/httpclient/HeaderProfile.h>
 
 #include <baselib/http2/Http2Profile.h>
@@ -136,48 +137,10 @@ namespace bl
          * depends on the OpenSSL version. The data model's base header includes crypto/ for its
          * object hashes (data/DataModelObject.h), so a translation unit including this one
          * compiles OpenSSL's headers - as every data model user does - and this header therefore
-         * stays out of every PreCompiled.h (design 9)
+         * stays out of every PreCompiled.h (design 9). The type it produces, BrowserProfile, is in
+         * httpclient/BrowserProfile.h, which is free of OpenSSL and of JSON, for a caller which
+         * needs only the type
          */
-
-        /**
-         * @brief How closely a profile's TLS layer can match its browser (design 6.1)
-         *
-         * Approximate is first, so that a profile nobody filled claims the weaker grade
-         */
-
-        enum class BrowserProfileGrade : std::uint8_t
-        {
-            /**
-             * The ClientHello cannot match the browser's JA4, for stated reasons
-             */
-
-            Approximate,
-
-            /**
-             * The ClientHello is expected to match the browser's JA4, subject to the spike
-             */
-
-            Ja4Candidate,
-        };
-
-        /**
-         * @brief One browser profile, loaded and validated - see BrowserProfilesT::load( )
-         *
-         * The version strings are not fields: the loader has composed them into the header
-         * lists, which is the only place they are sent from
-         */
-
-        struct BrowserProfile
-        {
-            std::string                                                         id;
-            std::string                                                         family;
-            cpp::ScalarTypeIniter< BrowserProfileGrade >                        grade;
-            std::vector< std::string >                                          deviations;
-
-            bl::crypto::TlsClientProfile                                        tls;
-            bl::http2::Http2Profile                                             http2;
-            bl::httpclient::HeaderProfile                                       headers;
-        };
 
         /**
          * @brief Loads, validates and looks up browser profiles
