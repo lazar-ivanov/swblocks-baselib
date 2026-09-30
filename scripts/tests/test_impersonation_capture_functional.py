@@ -457,6 +457,27 @@ class TestHttp2Capture:
         assert summary["connections"][0]["sni"] is None
         assert "PROBLEM: not every hello named capture.test in its SNI" in capture.format_report(summary)
 
+    def test_the_records_name_no_path_of_the_operators(self, start_server, certificates, monkeypatch):
+        """A1-7: session.json keeps the versions and the operating system but not the interpreter's path, and a
+        failure's error and traceback keep file names but no directory - either could name the account."""
+        def failing(*_):
+            raise OSError(2, "No such file or directory", str(TOOL.parent / "missing.bin"))
+        monkeypatch.setattr(capture, "build_response", failing)
+        server = start_server()
+        tls = connect(server.port, client_context(certificates))
+        client = H2Client(tls)
+        client.send(opening())
+        client.read_to_end()                        # the failure ends the connection, with a lingering close
+        tls.close()
+        summary = server.stop()
+        interpreter = summary["session"]["interpreter"]
+        assert "executable" not in interpreter and interpreter["platform"] and interpreter["openssl"]
+        meta = read_json(Path(server.out_dir) / "conn-0001" / "meta.json")
+        assert meta["error"] == "FileNotFoundError: [Errno 2] No such file or directory: 'missing.bin'"
+        assert 'File "capture.py"' in meta["traceback"]
+        for text in (meta["error"], meta["traceback"], (Path(server.out_dir) / "session.json").read_text()):
+            assert str(TOOL.parent) not in text and sys.prefix not in text and sys.executable not in text
+
     def test_every_connection_is_recorded_and_the_navigation_is_marked(self, start_server, certificates):
         """F5(b): a connection with no TLS at all, one whose client refused the certificate, one that
         navigated - three records, and the navigation's is the one marked."""

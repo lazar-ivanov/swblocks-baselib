@@ -128,10 +128,18 @@ def read_bytes(path):
 # The interpreter check (the plan review's F5(k)): Apple's bundled python3 cannot do this
 # ==================================================================================================
 
+def without_paths(text):
+    """Every quoted absolute path reduced to its last component. A path can name the operator's account
+    (C:\\Users\\<account>\\...), and a capture's records leave the machine."""
+    return re.sub(r"""(["'])(?:[A-Za-z]:[\\/]|/)[^"']*\1""",
+                  lambda match: match.group(1) + re.split(r"[\\/]+", match.group(0)[1:-1])[-1] + match.group(1),
+                  text)
+
+
 def interpreter_report():
+    """What session.json records of the interpreter: versions, and no path."""
     return {
         "python": sys.version.split()[0],
-        "executable": sys.executable,
         "openssl": ssl.OPENSSL_VERSION,
         "tls13": bool(getattr(ssl, "HAS_TLSv1_3", False)),
         "alpn": bool(getattr(ssl, "HAS_ALPN", False)),
@@ -1138,13 +1146,13 @@ class Connection(threading.Thread):
                     self.follower = H1Follower()
                     self._serve_h1()
         except Exception as error:
-            self.meta.setdefault("error", "%s: %s" % (type(error).__name__, error))
-            self.meta.setdefault("traceback", traceback.format_exc())
+            self.meta.setdefault("error", without_paths("%s: %s" % (type(error).__name__, error)))
+            self.meta.setdefault("traceback", without_paths(traceback.format_exc()))
         finally:
             try:
                 self._linger_close()
             except Exception as error:
-                self.meta.setdefault("error", "%s: %s" % (type(error).__name__, error))
+                self.meta.setdefault("error", without_paths("%s: %s" % (type(error).__name__, error)))
                 self.sock.close()
             finally:
                 self._finish()
@@ -1885,8 +1893,8 @@ def main(argv=None):
     try:
         if args.command in ("check", "certs", "serve"):
             report = interpreter_report()
-            print("capture.py %s: Python %s, %s (TLS 1.3: %s, ALPN: %s)" % (
-                TOOL_VERSION, report["python"], report["openssl"], report["tls13"], report["alpn"]))
+            print("capture.py %s: Python %s (%s), %s (TLS 1.3: %s, ALPN: %s)" % (
+                TOOL_VERSION, report["python"], sys.executable, report["openssl"], report["tls13"], report["alpn"]))
             problems = interpreter_problems()
             if problems:
                 print("This Python cannot capture: " + "; ".join(problems) + ".")

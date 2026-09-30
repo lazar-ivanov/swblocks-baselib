@@ -688,10 +688,22 @@ class TestControls:
         assert not (tmp_path / "repository" / "scripts" / "certs").exists()
 
     def test_the_interpreter_check_prints_the_tls_library(self, capsys):
-        """F5(k): the check prints ssl.OPENSSL_VERSION, and this host's Python passes it."""
+        """F5(k): the check prints ssl.OPENSSL_VERSION, and this host's Python passes it. The interpreter's
+        path is printed here, on the console only (A1-7)."""
         assert capture.interpreter_problems() == []
         assert capture.main(["check"]) == 0
-        assert ssl.OPENSSL_VERSION in capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert ssl.OPENSSL_VERSION in output and sys.executable in output
+
+    @pytest.mark.parametrize("text, expected", [
+        ('File "C:\\Users\\someone\\capture\\capture.py", line 9', 'File "capture.py", line 9'),
+        ("No such file: '/home/someone/capture/out/conn-0001/meta.json'", "No such file: 'meta.json'"),
+        ("[Errno 2] No such file or directory: 'C:\\\\Users\\\\someone\\\\x.bin'",
+         "[Errno 2] No such file or directory: 'x.bin'"),
+        ("relative 'out/conn-0001' and a word", "relative 'out/conn-0001' and a word"),
+    ])
+    def test_quoted_absolute_paths_are_reduced_to_names(self, text, expected):
+        assert capture.without_paths(text) == expected
 
     @pytest.mark.parametrize("attribute, text", [("HAS_TLSv1_3", "TLS 1.3"), ("HAS_ALPN", "ALPN")])
     def test_the_interpreter_check_refuses_without_tls13_or_alpn(self, monkeypatch, capsys, attribute, text):
