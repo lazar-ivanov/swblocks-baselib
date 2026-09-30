@@ -601,7 +601,10 @@ class TestFollowers:
         (capture.H2_PREFACE + frame(1, 0x00, 1, b"\x82") + frame(8, 0, 0, b"\x00\x00\x00\x01"), capture.PROTOCOL_ERROR),
         (capture.H2_PREFACE + frame(8, 0, 0, b"\x00"), capture.FRAME_SIZE_ERROR),
         (capture.H2_PREFACE + frame(1, 0x05, 1, b"\x80"), capture.COMPRESSION_ERROR),
-    ])
+        (capture.H2_PREFACE + frame(4, 0, 1, b""), capture.PROTOCOL_ERROR),
+        (capture.H2_PREFACE + frame(4, 0, 0, b"\x00" * 5), capture.FRAME_SIZE_ERROR),
+    ], ids=["no-preface", "frame-inside-a-header-block", "short-window-update", "hpack-index-0",
+            "settings-on-a-stream", "settings-not-a-multiple-of-6"])
     def test_h2_violations(self, stream, code):
         with pytest.raises(capture.ProtocolError) as raised:
             capture.H2Follower().feed(stream)

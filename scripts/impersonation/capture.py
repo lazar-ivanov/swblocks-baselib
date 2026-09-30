@@ -830,8 +830,10 @@ class H2Follower:
         if frame_type in sizes and len(payload) != sizes[frame_type]:
             raise ProtocolError(FRAME_SIZE_ERROR, "a %s frame of %d bytes" % (entry["type"], len(payload)))
         if frame_type == SETTINGS:
-            if stream != 0 or len(payload) % 6:
-                raise ProtocolError(FRAME_SIZE_ERROR, "a malformed SETTINGS frame")
+            if stream != 0:
+                raise ProtocolError(PROTOCOL_ERROR, "SETTINGS on stream %d" % stream)
+            if len(payload) % 6:
+                raise ProtocolError(FRAME_SIZE_ERROR, "a SETTINGS frame of %d bytes" % len(payload))
             if flags & FLAG_ACK:
                 return []
             entry["settings"] = [{"id": key, "name": SETTING_NAMES.get(key, "UNKNOWN"), "value": value}
