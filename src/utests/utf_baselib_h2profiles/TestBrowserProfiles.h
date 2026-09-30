@@ -1267,12 +1267,15 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_IdentityIsValidatedTests )
     {
         auto family = document;
 
-        family.family = R"json("Test Family")json";
-        requireRefused(
-            family,
+        const std::string familyRule =
             "family is not 1 to 64 characters of A-Z, a-z, 0-9, '.', '_' and '-', beginning with a "
-            "letter or a digit"
-            );
+            "letter or a digit";
+
+        family.family = R"json("Test Family")json";
+        requireRefused( family, familyRule );
+
+        family.family = quoted( std::string( 65U, 'F' ) );
+        requireRefused( family, familyRule );
 
         family.family = quoted( std::string( 64U, 'F' ) );
         ( void ) requireLoads( family );
@@ -1751,6 +1754,16 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_HeaderNamesAndValuesAreValidatedTests )
             "headers.subresource.defaultHeaders[1].name is not a lower-case token"
             );
     }
+
+    /*
+     * An empty name never reaches that rule: name is a required property of the data model, which
+     * counts an empty string as not provided
+     */
+
+    requireRefused(
+        withSubresourceHeader( R"json({ "name": "", "value": "v" })json" ),
+        "document is not a browser profile of the expected shape - Required property 'name'"
+        );
 
     /*
      * Values are field values as the session's http::HeaderList accepts them: no CR, LF or NUL -
