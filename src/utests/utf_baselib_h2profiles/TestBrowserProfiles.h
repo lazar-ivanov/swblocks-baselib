@@ -1198,6 +1198,27 @@ UTF_AUTO_TEST_CASE( BrowserProfiles_MalformedDocumentsAreRefusedTests )
         unknown = document;
         unknown.extraTopLevel = R"json("bad\r\nkey": 1)json";
         requireRefused( unknown, shape + "Unrecognized property 'bad??key'" );
+
+        /*
+         * Nor does the raw name reach the refusal's diagnostic information: details( ), which is
+         * how the library logs a failure, renders every nested exception with its message, so the
+         * data model's own exception, which carries the name as it came, is not nested in the
+         * loader's (the checkpoint review's C1-3)
+         */
+
+        try
+        {
+            ( void ) httpclient::BrowserProfiles::load( unknown.json() );
+
+            UTF_FAIL( "A document with a CR and an LF in an unrecognized property's name loaded" );
+        }
+        catch( InvalidDataFormatException& e )
+        {
+            const auto details = e.details();
+
+            UTF_REQUIRE( std::string::npos != details.find( "bad??key" ) );
+            UTF_REQUIRE( std::string::npos == details.find( "bad\r" ) );
+        }
     }
 
     /*

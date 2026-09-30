@@ -552,13 +552,14 @@ namespace bl
                 /*
                  * The data model's own message is kept because it names what failed - but made
                  * printable first, since one of its messages echoes an unrecognized property's
-                 * name, which is the document's text and may carry CR or LF
+                 * name, which is the document's text and may carry CR or LF. For the same reason
+                 * its exception is not nested in this one: details( ) renders every nested
+                 * exception with its message, which would put that name back as it came
                  */
 
                 BL_THROW(
                     InvalidDataFormatException()
-                        << eh::errinfo_is_user_friendly( true )
-                        << eh::errinfo_nested_exception_ptr( std::current_exception() ),
+                        << eh::errinfo_is_user_friendly( true ),
                     BL_MSG()
                         << "Invalid browser profile: document is not a browser profile of the "
                         << "expected shape - "
@@ -1587,8 +1588,8 @@ namespace bl
              * @brief Loads and validates one browser profile from its JSON document
              *
              * @throw InvalidDataFormatException when the document breaks any rule of the class
-             * note, naming the property by its path; the data model's own failure, when it is the
-             * document's shape which is wrong, is nested in it
+             * note, naming the property by its path; when it is the document's shape which is
+             * wrong, the message carries the data model's own, made printable
              */
 
             static auto load( SAA_in const std::string& jsonText ) -> BrowserProfile
