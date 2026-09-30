@@ -826,6 +826,9 @@ class H2Follower:
         self.frames.append(entry)
         if self.block is not None and frame_type != CONTINUATION:
             raise ProtocolError(PROTOCOL_ERROR, "a %s frame inside a header block" % entry["type"])
+        # The follower is a recorder: it refuses only what would stop it from following the stream. So a
+        # SETTINGS ACK that carries a payload, or a WINDOW_UPDATE of 0, is recorded as it came, although
+        # RFC 9113 6.5 and 6.9 make them errors
         sizes = {PRIORITY: 5, RST_STREAM: 4, PING: 8, WINDOW_UPDATE: 4}
         if frame_type in sizes and len(payload) != sizes[frame_type]:
             raise ProtocolError(FRAME_SIZE_ERROR, "a %s frame of %d bytes" % (entry["type"], len(payload)))
