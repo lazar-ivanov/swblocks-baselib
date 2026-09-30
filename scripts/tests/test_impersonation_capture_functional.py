@@ -191,6 +191,18 @@ class H2Client:
     def ended(self, *streams):
         return lambda: all(self.responses.get(stream, {}).get("ended") for stream in streams)
 
+    def barrier(self, before=b""):
+        """Sends 'before' and a PING in one write, and reads until the PING's ACK. The tool answers frames in
+        order, so by then everything the frames before the PING allowed it to send has arrived."""
+        self.barriers = getattr(self, "barriers", 0) + 1
+        payload = b"barrier%d" % (self.barriers % 10)
+        self.send(before + frame(6, 0, 0, payload))
+        self.read_until(lambda: payload in self.ping_acks)
+        self.ping_acks.remove(payload)
+
+    def received(self, stream):
+        return len(self.responses.get(stream, {}).get("body", b""))
+
     def read_to_end(self):
         """After the tool's GOAWAY: everything up to its close_notify and end of stream. A reset raises."""
         while self.read_frame() is not None:
@@ -305,6 +317,17 @@ class TestHttp2Capture:
 
         # Everything in the summary is derived from the stored bytes: deriving it again gives the same
         assert capture.analyse_session(server.out_dir) == summary
+
+    def test_a_ping_is_answered_after_the_data_of_the_requests_before_it(self, start_server, certificates):
+        """The tool answers frames in order: the DATA a request is owed goes out before the ACK of a PING sent
+        after it, in the same write. That makes a PING the barrier the flow-control cases wait on."""
+        server = start_server()
+        tls = connect(server.port, client_context(certificates))
+        client = H2Client(tls)
+        client.barrier(before=opening())
+        assert client.ended(5)() and client.responses[5]["body"] == capture.PAGE
+        lingering_client_close(tls)
+        server.stop()
 
     def test_negative_control_without_the_linger_the_late_frames_are_lost(self, start_server, certificates):
         """The same close with the bound at 0: the tool closes without reading, so the assertion above

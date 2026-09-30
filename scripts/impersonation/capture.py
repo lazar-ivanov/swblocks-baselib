@@ -1259,7 +1259,7 @@ class Connection(threading.Thread):
                     return self._goaway(error.code, error.text)
                 for event in events:
                     self._on_h2_event(event)
-                self._pump()
+                    self._pump()                    # in order: DATA a frame allows goes before a later PING's ACK
             self._flush()
             if self.client_gone is not None:
                 self.meta["ended_by"] = self._gone_text()
