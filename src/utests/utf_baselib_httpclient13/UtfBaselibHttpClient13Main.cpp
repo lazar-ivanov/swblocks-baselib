@@ -38,9 +38,9 @@
  * end of its teardown, utests/baselib/TlsTeardownTestUtils.h
  *
  * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 35.2 MB clang debug (a64) at
- * d13859c, which by the ratio win-x86 debug has shown over a64 clang debug (1.13 to 1.17,
- * notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) is
- * about 40 to 41 MB on x86 - inferred, not measured; the Windows handoff measures it. The weight is
+ * d13859c. On x86 it measures 42.8 MB at win-x86-vc143-debug and 42.9 at ccl16 (the Windows matrix,
+ * 2026-09-29: astra-second-review-decisions.md, D-B), over the 40 MB target and under D-B's 45; an
+ * a64-to-x86 estimate uses the measured 1.15 to 1.25, not row 5c's 1.13 to 1.17. The weight is
  * the HTTP/1.1 driver, the plain connection establisher and SimpleHttpSslTask. This module takes no
  * further cases. MB above are 2^20 bytes, as utf_objsize.py counts them
  *

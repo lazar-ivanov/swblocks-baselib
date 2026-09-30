@@ -35,9 +35,9 @@
  * with utf_baselib_h2client9. Not the request task, the session or the pool
  *
  * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 35.9 MB clang debug (a64) at
- * d13859c, which by the ratio win-x86 debug has shown over a64 clang debug (1.13 to 1.17,
- * notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) is
- * about 41 to 42 MB on x86 - inferred, not measured; the Windows handoff measures it. The weight is
+ * d13859c. On x86 it measures 41.4 MB at win-x86-vc143-debug and 41.6 at ccl16 (the Windows matrix,
+ * 2026-09-29: astra-second-review-decisions.md, D-B), over the 40 MB target and under D-B's 45; an
+ * a64-to-x86 estimate uses the measured 1.15 to 1.25, not row 5c's 1.13 to 1.17. The weight is
  * the HTTP/2 driver over the stranded TLS policy and the connection task under it, which one case
  * alone costs (utf_baselib_h2client9 is one case at 35.7 MB), so a split cannot lower it. This
  * module takes no further cases
