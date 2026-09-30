@@ -895,7 +895,7 @@ namespace bl
             /**
              * @brief Parses a PRIORITY frame into the profile's own Http2PriorityFrame
              *
-             * 'weight' is the octet as it appears on the wire; RFC 9113 6.3 has the actual weight
+             * 'weight' is the octet as it appears on the wire; RFC 7540 6.3 has the actual weight
              * one higher, and this does not add the one - the profile records what a browser puts
              * on the wire and this must round-trip it exactly
              */
