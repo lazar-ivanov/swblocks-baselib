@@ -610,3 +610,32 @@ the result. L7-D's merge is `5fcb700`, and its tier-1 refresh is `e514fe2`.
 - **E2. Its x86 debug size.** Record it. It is 24,009,840 bytes (22.9 MB) at a64 clang debug. That is
   about 26.3 to 28.6 MB on x86 by the measured 1.15 to 1.25 ratio: inferred, not measured.
 - **E3. Whether it builds at x86 `ccl16` release.** As D3 above, only the build can tell.
+
+## L7-C, 2026-09-30 — what the browser profile loader owes Windows
+
+**Run only from a tip the maintainer has pushed** that contains L7-C's merge, and record the tip in
+the result. L7-C's merge is `05b6ab6`, and its tier-1 refresh is `79d3d3d`.
+
+**What L7-C changed:** three new headers:
+- `crypto/TlsNameRules.h`;
+- `httpclient/BrowserProfiles.h`;
+- `httpclient/BrowserProfile.h`.
+
+Only `utf_baselib_h2profiles` includes them, and it gained 16 cases. No existing header includes them
+yet. L7-B's part 2 will make `crypto/CryptoBase.h` include the first.
+
+**What Linux established:**
+- The gate is green: `utf_baselib_h2profiles` at clang release and gcc debug.
+- 50 runs are clean at clang debug, and 10 of 10 negative controls are caught.
+
+**What Linux cannot settle:**
+- **F1. Run `utf_baselib_h2profiles` whole.** MSVC and clang-cl compile the new headers here for the
+  first time.
+  - `TlsNameRules_AgreesWithTheLinkedOpenSslTests` compares the rule with the linked OpenSSL's own
+    classification of every suite it knows. Against the same 3.5.4 it is expected green.
+  - A failure there means the Windows dist's OpenSSL is configured differently. Report which suites
+    differ.
+- **F2. Its x86 debug size.** Record it. It is 28,142,808 bytes (26.839 MB) at a64 clang debug. That is
+  about 30.9 to 33.5 MB on x86 by the measured 1.15 to 1.25 ratio: inferred, not measured. Either way
+  it is under the 40 MB target.
+- **F3. Whether it builds at x86 `ccl16` release.** As D3 above, only the build can tell.
