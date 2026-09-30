@@ -470,6 +470,24 @@ class TestHttp1Capture:
         assert summary["checks"]["alpn_selected"] == {"1": "http/1.1"}
         assert summary["session"]["alpn_offered"] == ["http/1.1"]
 
+    def test_a_malformed_request_is_answered_and_recorded_and_the_summary_is_written(self, start_server, certificates):
+        """A1-5, end to end: a Content-Length that passes isdigit() but is no number gets a 400 with
+        Connection: close and a lingering close, and the run still ends in a summary.json holding the error."""
+        server = start_server(http1=True)
+        tls = connect(server.port, client_context(certificates, ("h2", "http/1.1")))
+        tls.sendall("GET / HTTP/1.1\r\nHost: capture.test\r\nContent-Length: ²\r\n\r\n".encode("latin-1"))
+        status, headers, _, _ = read_http1_response(tls)
+        assert status == "HTTP/1.1 400 Bad Request" and dict(headers)["Connection"] == "close"
+        while tls.recv(65536):
+            pass
+        tls.close()
+        summary = server.stop()
+        assert (Path(server.out_dir) / "summary.json").is_file()
+        record = read_json(Path(server.out_dir) / "conn-0001" / "connection.json")
+        assert record["http1"]["error"] == "a malformed Content-Length" and record["http1"]["requests"] == []
+        assert record["meta"]["ended_by"] == "an HTTP/1.1 error from the client: a malformed Content-Length"
+        assert "error" not in record["meta"] and summary["checks"]["connections_recorded"] == 1
+
 
 # ========== Certificates, and the command line ==========
 

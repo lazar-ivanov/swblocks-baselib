@@ -620,6 +620,15 @@ class TestFollowers:
         assert follower.requests[0]["headers"] == [["Host", "capture.test"], ["X-Mixed-CASE", "a"]]
         assert follower.requests[0]["raw_head"] == first.decode("latin-1")
 
+    @pytest.mark.parametrize("value", ["²", "1" * 5000, "-1", "3a", ""],
+                             ids=["superscript-two", "5000-digits", "negative", "letter", "empty"])
+    def test_a_malformed_content_length_is_a_malformed_request(self, value):
+        """A1-5: a superscript digit passes isdigit() and a 5,000-digit value passes it too, and neither
+        converts; each is a malformed request, never a ValueError that would stop the analysis."""
+        head = ("POST /fetch HTTP/1.1\r\nContent-Length: %s\r\n\r\n" % value).encode("latin-1")
+        with pytest.raises(capture.ProtocolError, match="Content-Length"):
+            capture.H1Follower().feed(head)
+
 
 # ========== The controls that need no socket ==========
 

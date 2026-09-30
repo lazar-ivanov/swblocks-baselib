@@ -47,6 +47,7 @@ import ipaddress
 import json
 import os
 import platform
+import re
 import select
 import shutil
 import signal
@@ -976,7 +977,7 @@ class H1Follower:
         if any(name.lower() == "transfer-encoding" for name, _ in headers):
             raise ProtocolError(PROTOCOL_ERROR, "a request body with Transfer-Encoding")
         lengths = [value for name, value in headers if name.lower() == "content-length"]
-        if lengths and not lengths[0].isdigit():
+        if lengths and not re.fullmatch(r"[0-9]{1,15}", lengths[0]):
             raise ProtocolError(PROTOCOL_ERROR, "a malformed Content-Length")
         return {"offset": self.consumed, "raw_head": head.decode("latin-1"), "request_line": lines[0],
                 "method": parts[0], "target": parts[1], "version": parts[2], "headers": headers,
@@ -1569,8 +1570,8 @@ def analyse_connection(directory):
         section = {"error": None}
         try:
             follower.feed(plain)
-        except ProtocolError as error:
-            section["error"] = error.text
+        except (ProtocolError, ValueError) as error:
+            section["error"] = getattr(error, "text", str(error))
         for request in follower.requests:
             key = str(request["stream"] if is_h2 else request["index"])
             start = request["header_block"]["offset"] if is_h2 else request["offset"]
