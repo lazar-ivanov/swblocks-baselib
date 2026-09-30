@@ -596,6 +596,17 @@ class TestFollowers:
                                                   "weight_on_wire": 200}
         assert follower.frames[3]["flags"] == ["END_STREAM", "PRIORITY"]
 
+    def test_each_connection_has_its_own_hpack_table(self):
+        """A1-3: an entry one connection adds to its table is not in another connection's."""
+        first, second = capture.H2Follower(), capture.H2Follower()
+        first.feed(capture.H2_PREFACE + frame(1, 0x05, 1, b"\x82\x87\x84\x41\x0ccapture.test"))
+        assert first.decoder.entries == [(":authority", "capture.test")]
+        first.feed(frame(1, 0x05, 3, b"\x82\x87\x84\xbe"))                    # 62 is that entry, on its own connection
+        assert first.requests[1]["authority"] == "capture.test"
+        with pytest.raises(capture.ProtocolError) as raised:
+            second.feed(capture.H2_PREFACE + frame(1, 0x05, 1, b"\x82\x87\x84\xbe"))
+        assert raised.value.code == capture.COMPRESSION_ERROR
+
     @pytest.mark.parametrize("stream, code", [
         (b"GET / HTTP/1.1\r\n\r\n" + b"x" * 8, capture.PROTOCOL_ERROR),
         (capture.H2_PREFACE + frame(1, 0x00, 1, b"\x82") + frame(8, 0, 0, b"\x00\x00\x00\x01"), capture.PROTOCOL_ERROR),

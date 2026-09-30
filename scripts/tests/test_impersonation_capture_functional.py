@@ -150,7 +150,7 @@ class H2Client:
 
     def __init__(self, tls):
         self.tls, self.buffer, self.decoder = tls, b"", capture.HpackDecoder()
-        self.responses, self.goaway, self.ping_acks = {}, None, []
+        self.responses, self.goaway, self.ping_acks, self.log = {}, None, [], []
 
     def send(self, data):
         self.tls.sendall(data)
@@ -169,6 +169,7 @@ class H2Client:
         result = (self.buffer[3], self.buffer[4], int.from_bytes(self.buffer[5:9], "big") & 0x7FFFFFFF,
                   self.buffer[9:9 + length])
         self.buffer = self.buffer[9 + length:]
+        self.log.append(result)
         return result
 
     def read_until(self, done):
@@ -179,7 +180,7 @@ class H2Client:
             elif frame_type == 1:
                 fields, _ = self.decoder.decode(payload)
                 self.responses[stream] = {"headers": [(f["name"], f["value"]) for f in fields], "body": b"",
-                                          "ended": bool(flags & 1)}
+                                          "ended": bool(flags & 1), "block": payload}
             elif frame_type == 0:
                 self.responses[stream]["body"] += payload
                 self.responses[stream]["ended"] = bool(flags & 1)
@@ -440,6 +441,76 @@ class TestHttp2Capture:
         assert rows[1]["handshake"] == "incomplete: the client closed the connection" and rows[1]["ja4"] is None
         assert rows[2]["handshake"].startswith("failed") and rows[2]["ja4"] == rows[3]["ja4"]
         assert rows[3]["kinds"] == ["navigation"]
+
+
+# ========== The HTTP/2 server a browser needs: preface, ACK, size update, flow control ==========
+
+def settings_frame(*pairs):
+    return frame(4, 0, 0, b"".join(key.to_bytes(2, "big") + value.to_bytes(4, "big") for key, value in pairs))
+
+
+def get(path):
+    """A GET for path on capture.test, as a header block of literals and static indices."""
+    return b"".join([indexed(2), literal("without", 1, HOST), indexed(7), literal("without", 4, path)])
+
+
+class TestHttp2Server:
+    """A1-3: what every browser relies on the server for. Each case turns red when its behaviour is removed
+    (the reviewer's mutants, logs/l7/a/review/mutate.py)."""
+
+    def test_the_server_speaks_first_acks_the_clients_settings_and_answers_a_small_table(self, start_server,
+                                                                                          certificates):
+        server = start_server()
+        tls = connect(server.port, client_context(certificates))
+        client = H2Client(tls)
+        client.barrier(before=capture.H2_PREFACE + settings_frame((1, 0)) + frame(1, 0x05, 1, get("/")))
+        first = client.log[0]
+        assert (first[0], first[1], first[3]) == (4, 0, bytes.fromhex("000300000064"))     # MAX_CONCURRENT_STREAMS
+        assert [entry for entry in client.log if entry[0] == 4 and entry[1] & 1] == [(4, 1, 0, b"")]
+        assert client.responses[1]["block"][:1] == b"\x20"           # a table size update to 0 opens the block
+        assert client.ended(1)()
+        lingering_client_close(tls)
+        server.stop()
+
+    def test_the_stream_window_stops_data_and_a_window_update_resumes_it(self, start_server, certificates):
+        server = start_server()
+        tls = connect(server.port, client_context(certificates))
+        client = H2Client(tls)
+        client.barrier(before=capture.H2_PREFACE + settings_frame((4, 100)) + frame(1, 0x05, 1, get("/")))
+        assert client.received(1) == 100 and not client.ended(1)()
+        client.barrier(before=frame(8, 0, 1, (10000).to_bytes(4, "big")))
+        assert client.ended(1)() and client.responses[1]["body"] == capture.PAGE
+        lingering_client_close(tls)
+        server.stop()
+
+    def test_the_connection_window_stops_data_and_a_window_update_resumes_it(self, start_server, certificates):
+        server = start_server()
+        tls = connect(server.port, client_context(certificates))
+        client = H2Client(tls)
+        count = 65535 // len(capture.SCRIPT) + 3
+        streams = [1 + 2 * index for index in range(count)]
+        client.barrier(before=capture.H2_PREFACE + settings_frame((4, 1 << 20))
+                       + b"".join(frame(1, 0x05, stream, get("/capture.js")) for stream in streams))
+        assert sum(client.received(stream) for stream in streams) == 65535
+        assert not client.ended(*streams)()
+        client.barrier(before=frame(8, 0, 0, (1 << 20).to_bytes(4, "big")))
+        assert client.ended(*streams)()
+        assert all(client.responses[stream]["body"] == capture.SCRIPT for stream in streams)
+        lingering_client_close(tls)
+        server.stop()
+
+    def test_a_new_initial_window_size_applies_to_a_stream_already_sending(self, start_server, certificates):
+        """RFC 9113 6.9.2: a second SETTINGS, mid-response, moves the open stream's window by the difference;
+        the rest of the page arrives with no WINDOW_UPDATE at all."""
+        server = start_server()
+        tls = connect(server.port, client_context(certificates))
+        client = H2Client(tls)
+        client.barrier(before=capture.H2_PREFACE + settings_frame((4, 100)) + frame(1, 0x05, 1, get("/")))
+        assert client.received(1) == 100 and not client.ended(1)()
+        client.barrier(before=settings_frame((4, 1000)))
+        assert client.ended(1)() and client.responses[1]["body"] == capture.PAGE
+        lingering_client_close(tls)
+        server.stop()
 
 
 # ========== HTTP/1.1: the second pass ==========
